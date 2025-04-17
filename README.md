@@ -12,7 +12,7 @@ A Go package that provides a colorized JSON handler for the Go standard library'
 ## Installation
 
 ```bash
-go get github.com/zjeremiah/colorjson
+go get github.com/hydronica/color-json
 ```
 
 ## Usage
@@ -24,7 +24,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/zjeremiah/colorjson"
+	"github.com/hydronica/color-json"
 )
 
 func main() {
