@@ -17,9 +17,12 @@ const (
 	GreenColor   TerminalColor = "\033[32m"   // green
 	YellowColor  TerminalColor = "\033[33m"   // yellow
 	MagentaColor TerminalColor = "\033[35m"   // magenta
-	WhiteColor   TerminalColor = "\033[37;1m" // bright white
+	WhiteColor   TerminalColor = "\033[37m"   // white
+	BWhiteColor  TerminalColor = "\033[37;1m" // bright white
 	BBlueColor   TerminalColor = "\033[34;1m" // bright blue
 	BCyanColor   TerminalColor = "\033[36;1m" // bright cyan
+	BYellowColor TerminalColor = "\033[33;1m" // bright yellow
+	BRedColor    TerminalColor = "\033[31;1m" // bright red
 	RedColor     TerminalColor = "\033[31m"   // red
 	BlueColor    TerminalColor = "\033[34m"   // blue
 	GrayColor    TerminalColor = "\033[90m"   // gray
@@ -66,10 +69,6 @@ type ColorJSONHandler struct {
 
 // NewHandler creates a new handler for colorized JSON output
 func NewHandler(w io.Writer, opts *slog.HandlerOptions) *ColorJSONHandler {
-	if opts == nil {
-		opts = &slog.HandlerOptions{}
-	}
-
 	// Create a buffer to store JSON output temporarily
 	buf := new(bytes.Buffer)
 
@@ -88,10 +87,10 @@ func NewHandler(w io.Writer, opts *slog.HandlerOptions) *ColorJSONHandler {
 			Null:       WhiteColor,
 			Key:        CyanColor,
 			Brace:      BBlueColor,
-			LevelInfo:  BCyanColor,
+			LevelInfo:  BWhiteColor,
 			LevelDebug: BCyanColor,
-			LevelWarn:  YellowColor,
-			LevelError: RedColor,
+			LevelWarn:  BYellowColor,
+			LevelError: BRedColor,
 		},
 	}
 }

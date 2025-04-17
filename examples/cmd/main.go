@@ -9,11 +9,14 @@ import (
 
 func main() {
 	// Create a new colorized JSON handler
-	handler := colorjson.NewHandler(os.Stdout, &slog.HandlerOptions{
+	handler := colorjson.NewHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug, // Set minimum level
 	})
 	// customize colors
 	handler.Colors.Brace = colorjson.GrayColor
+	// background red, white text
+	handler.Colors.LevelError = colorjson.BgRedColor + colorjson.WhiteColor
+
 	// Create a logger with the handler
 	logger := slog.New(handler)
 
@@ -23,7 +26,7 @@ func main() {
 	// Example log messages
 	slog.Info("Server started", "addr", ":8080")
 	slog.Debug("Detailed debug message", "value", 123)
-	slog.Debug(`Testing null escaped quotes: "`, "value", nil)
+	slog.Debug(`Testing null & escaped quotes: "`, "value", nil)
 	slog.Warn("Something might be wrong", "error", "connection timeout")
 	slog.Error("Critical error occurred", "error", "file not found", "details", map[string]interface{}{
 		"path":        "/var/log/app.log",
