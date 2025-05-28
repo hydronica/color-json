@@ -5,44 +5,50 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type TerminalColor string
 
 const (
-	Reset        TerminalColor = "\033[0m"
-	CyanColor    TerminalColor = "\033[36m"   // cyan
-	GreenColor   TerminalColor = "\033[32m"   // green
-	YellowColor  TerminalColor = "\033[33m"   // yellow
-	MagentaColor TerminalColor = "\033[35m"   // magenta
-	WhiteColor   TerminalColor = "\033[37m"   // white
-	BWhiteColor  TerminalColor = "\033[37;1m" // bright white
-	BBlueColor   TerminalColor = "\033[34;1m" // bright blue
-	BCyanColor   TerminalColor = "\033[36;1m" // bright cyan
-	BYellowColor TerminalColor = "\033[33;1m" // bright yellow
-	BRedColor    TerminalColor = "\033[31;1m" // bright red
-	RedColor     TerminalColor = "\033[31m"   // red
-	BlueColor    TerminalColor = "\033[34m"   // blue
-	GrayColor    TerminalColor = "\033[90m"   // gray
+	reset        TerminalColor = "\033[0m"
+	cyanColor    TerminalColor = "\033[36m"   // cyan
+	greenColor   TerminalColor = "\033[32m"   // green
+	yellowColor  TerminalColor = "\033[33m"   // yellow
+	magentaColor TerminalColor = "\033[35m"   // magenta
+	whiteColor   TerminalColor = "\033[37m"   // white
+	bWhiteColor  TerminalColor = "\033[37;1m" // bright white
+	bBlueColor   TerminalColor = "\033[34;1m" // bright blue
+	bCyanColor   TerminalColor = "\033[36;1m" // bright cyan
+	bYellowColor TerminalColor = "\033[33;1m" // bright yellow
+	bRedColor    TerminalColor = "\033[31;1m" // bright red
+	redColor     TerminalColor = "\033[31m"   // red
+	blueColor    TerminalColor = "\033[34m"   // blue
+	grayColor    TerminalColor = "\033[90m"   // gray
 	// Additional colors
-	BoldColor      TerminalColor = "\033[1m"  // bold
-	ItalicColor    TerminalColor = "\033[3m"  // italic
-	UnderlineColor TerminalColor = "\033[4m"  // underline
-	BlackColor     TerminalColor = "\033[30m" // black
-	BgRedColor     TerminalColor = "\033[41m" // background red
-	BgGreenColor   TerminalColor = "\033[42m" // background green
-	BgYellowColor  TerminalColor = "\033[43m" // background yellow
-	BgBlueColor    TerminalColor = "\033[44m" // background blue
-	BgMagentaColor TerminalColor = "\033[45m" // background magenta
-	BgCyanColor    TerminalColor = "\033[46m" // background cyan
-	BgWhiteColor   TerminalColor = "\033[47m" // background white
+	boldColor      TerminalColor = "\033[1m"  // bold
+	italicColor    TerminalColor = "\033[3m"  // italic
+	underlineColor TerminalColor = "\033[4m"  // underline
+	blackColor     TerminalColor = "\033[30m" // black
+	bgRedColor     TerminalColor = "\033[41m" // background red
+	bgGreenColor   TerminalColor = "\033[42m" // background green
+	bgYellowColor  TerminalColor = "\033[43m" // background yellow
+	bgBlueColor    TerminalColor = "\033[44m" // background blue
+	bgMagentaColor TerminalColor = "\033[45m" // background magenta
+	bgCyanColor    TerminalColor = "\033[46m" // background cyan
+	bgWhiteColor   TerminalColor = "\033[47m" // background white
 	// 256-color mode
-	OrangeColor TerminalColor = "\033[38;5;208m" // orange (256-color mode)
-	PurpleColor TerminalColor = "\033[38;5;129m" // purple (256-color mode)
-	PinkColor   TerminalColor = "\033[38;5;213m" // pink (256-color mode)
-	TealColor   TerminalColor = "\033[38;5;23m"  // teal (256-color mode)
+	orangeColor TerminalColor = "\033[38;5;208m" // orange (256-color mode)
+	purpleColor TerminalColor = "\033[38;5;129m" // purple (256-color mode)
+	pinkColor   TerminalColor = "\033[38;5;213m" // pink (256-color mode)
+	tealColor   TerminalColor = "\033[38;5;23m"  // teal (256-color mode)
+	noColor     TerminalColor = ""               // don't modify
 )
 
 // Colors is a struct that contains the ANSI color codes for JSON syntax highlighting
@@ -61,309 +67,182 @@ type Colors struct {
 
 // ColorJSONHandler is a custom handler that produces colorized JSON output
 type ColorJSONHandler struct {
-	Colors      Colors // allows for customizing colors
-	out         io.Writer
-	opts        *slog.HandlerOptions
-	baseHandler slog.Handler
+	//Colors Colors // allows for customizing colors
+	out io.Writer
+	HandlerOptions
+}
+
+// HandlerOptions is a custom options struct that extends slog.HandlerOptions
+type HandlerOptions struct {
+	// AddSource causes the handler to compute the source code position
+	// of the log statement and add a SourceKey attribute to the output.
+	Source SrcFormat
+
+	// Minimum level to log (Default: slog.LevelInfo)
+	Level slog.Leveler
+
+	// ReplaceAttr is called to rewrite each non-group attribute before it is logged.
+	// See https://pkg.go.dev/log/slog#HandlerOptions for details.
+	ReplaceAttr func(groups []string, attr slog.Attr) slog.Attr
+
+	// TimeFormat allows customizing how time is formatted
+	// If empty, time.TimeOnly will be used
+	TimeFormat string
+
+	// ColorScheme defines preset color schemes
+	// Valid values are: "default", "tint", "monochrome"
+	ColorScheme Colors
 }
 
 // NewHandler creates a new handler for colorized JSON output
-func NewHandler(w io.Writer, opts *slog.HandlerOptions) *ColorJSONHandler {
-	// Create a buffer to store JSON output temporarily
-	buf := new(bytes.Buffer)
-
-	// Create the base JSON handler that writes to our buffer
-	baseHandler := slog.NewJSONHandler(buf, opts)
+func NewHandler(w io.Writer, opts *HandlerOptions) *ColorJSONHandler {
+	if opts == nil {
+		opts = &HandlerOptions{
+			ColorScheme: ColorDefault,
+		}
+	}
+	if opts.TimeFormat == "" {
+		opts.TimeFormat = time.TimeOnly
+	}
 
 	return &ColorJSONHandler{
-		out:         w,
-		opts:        opts,
-		baseHandler: baseHandler,
-		// Default colors
-		Colors: Colors{
-			String:     GreenColor,
-			Number:     YellowColor,
-			Boolean:    MagentaColor,
-			Null:       WhiteColor,
-			Key:        CyanColor,
-			Brace:      BBlueColor,
-			LevelInfo:  BWhiteColor,
-			LevelDebug: BCyanColor,
-			LevelWarn:  BYellowColor,
-			LevelError: BRedColor,
-		},
+		out:            w,
+		HandlerOptions: *opts,
 	}
 }
 
 // Enabled implements slog.Handler.
 func (h *ColorJSONHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.baseHandler.Enabled(ctx, level)
+	return true
+	// TODO implement
 }
 
 // Handle implements slog.Handler.
 func (h *ColorJSONHandler) Handle(ctx context.Context, r slog.Record) error {
-	// Create a buffer to store the JSON output
-	buf := new(bytes.Buffer)
-
-	// Use the baseHandler to format as JSON, writing to our buffer
-	tempHandler := slog.NewJSONHandler(buf, h.opts)
-	if err := tempHandler.Handle(ctx, r); err != nil {
-		return err
-	}
-
-	// Get the JSON string and colorize it
-	jsonStr := buf.String()
-	colorized := colorizeJSON(jsonStr, h.Colors)
+	colorized := h.coloredJSON(r, h.ColorScheme)
 
 	// Write the colorized JSON to the output
 	_, err := fmt.Fprint(h.out, colorized)
+	//h.buffer.Reset()
 	return err
 }
 
 // WithAttrs implements slog.Handler.
 func (h *ColorJSONHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &ColorJSONHandler{
-		out:         h.out,
-		opts:        h.opts,
-		baseHandler: h.baseHandler.WithAttrs(attrs),
+		out:            h.out,
+		HandlerOptions: h.HandlerOptions,
+		// baseHandler:    h.baseHandler.WithAttrs(attrs),
 	}
 }
 
 // WithGroup implements slog.Handler.
 func (h *ColorJSONHandler) WithGroup(name string) slog.Handler {
 	return &ColorJSONHandler{
-		out:         h.out,
-		opts:        h.opts,
-		baseHandler: h.baseHandler.WithGroup(name),
+		out:            h.out,
+		HandlerOptions: h.HandlerOptions,
+		//baseHandler:    h.baseHandler.WithGroup(name),
 	}
 }
 
-// colorizeJSON adds ANSI color codes to format a JSON string
-func colorizeJSON(jsonStr string, colors Colors) string {
-	type tokenType int
-	const (
-		tokenString tokenType = iota
-		tokenNumber
-		tokenBoolean
-		tokenNull
-		tokenBrace
-		tokenKey
-		tokenColon
-		tokenComma
-		tokenOther
-		tokenLevel // New token type for log levels
-	)
+func (h *HandlerOptions) coloredJSON(r slog.Record, colors Colors) string {
+	buf := &strings.Builder{}
+	buf.WriteString("{")
 
-	var result strings.Builder
-	var tokens []struct {
-		content string
-		typ     tokenType
+	// Write time
+	cJSON(buf, "time", r.Time.Format(h.TimeFormat), h.ColorScheme.Key, bWhiteColor)
+
+	// Write level
+	switch r.Level {
+	case slog.LevelInfo:
+		cJSON(buf, "level", r.Level.String(), h.ColorScheme.Key, h.ColorScheme.LevelInfo)
+	case slog.LevelDebug:
+		cJSON(buf, "level", r.Level.String(), h.ColorScheme.Key, h.ColorScheme.LevelDebug)
+	case slog.LevelWarn:
+		cJSON(buf, "level", r.Level.String(), h.ColorScheme.Key, h.ColorScheme.LevelWarn)
+	case slog.LevelError:
+		cJSON(buf, "level", r.Level.String(), h.ColorScheme.Key, h.ColorScheme.LevelError)
 	}
 
-	// First pass: tokenize the JSON
-	i := 0
-	// Track whether we're about to see a level value
-	possibleLevelKey := false
+	// Write message
+	cJSON(buf, "msg", r.Message, h.ColorScheme.Key, bWhiteColor)
 
-	for i < len(jsonStr) {
-		c := jsonStr[i]
-		switch c {
-		case ' ', '\t', '\n', '\r':
-			// Whitespace
-			start := i
-			for i < len(jsonStr) && (jsonStr[i] == ' ' || jsonStr[i] == '\t' || jsonStr[i] == '\n' || jsonStr[i] == '\r') {
-				i++
-			}
-			tokens = append(tokens, struct {
-				content string
-				typ     tokenType
-			}{content: jsonStr[start:i], typ: tokenOther})
-		case '{', '}', '[', ']':
-			// Braces/brackets
-			tokens = append(tokens, struct {
-				content string
-				typ     tokenType
-			}{content: string(c), typ: tokenBrace})
-			i++
-		case ':':
-			// Colon
-			tokens = append(tokens, struct {
-				content string
-				typ     tokenType
-			}{content: ":", typ: tokenColon})
-			i++
-		case ',':
-			// Comma
-			tokens = append(tokens, struct {
-				content string
-				typ     tokenType
-			}{content: ",", typ: tokenComma})
-			i++
-		case '"':
-			// String or key
-			start := i
-			i++ // Skip opening quote
-			strContent := ""
-			for i < len(jsonStr) {
-				if jsonStr[i] == '\\' && i+1 < len(jsonStr) {
-					strContent += string(jsonStr[i]) + string(jsonStr[i+1])
-					i += 2 // Skip escape sequence
-					continue
-				}
-				if jsonStr[i] == '"' {
-					strContent += string(jsonStr[i])
-					i++ // Include closing quote
-					break
-				}
-				strContent += string(jsonStr[i])
-				i++
-			}
-			content := jsonStr[start:i]
-			strValue := strings.Trim(strContent, "\"")
-
-			// Look ahead to see if this is a key (followed by colon)
-			isKey := false
-			for j := i; j < len(jsonStr); j++ {
-				if jsonStr[j] == ' ' || jsonStr[j] == '\t' || jsonStr[j] == '\n' || jsonStr[j] == '\r' {
-					continue
-				}
-				if jsonStr[j] == ':' {
-					isKey = true
-				}
-				break
-			}
-
-			if isKey {
-				// Set flag if this is the level key
-				if strValue == "level" {
-					possibleLevelKey = true
-				} else {
-					possibleLevelKey = false
-				}
-
-				tokens = append(tokens, struct {
-					content string
-					typ     tokenType
-				}{content: content, typ: tokenKey})
-			} else if possibleLevelKey && isLogLevel(strValue) {
-				// This is a log level value, mark it as such
-				tokens = append(tokens, struct {
-					content string
-					typ     tokenType
-				}{content: content, typ: tokenLevel})
-				possibleLevelKey = false
-			} else {
-				tokens = append(tokens, struct {
-					content string
-					typ     tokenType
-				}{content: content, typ: tokenString})
-				possibleLevelKey = false
-			}
-		case 't':
-			// true
-			if i+3 < len(jsonStr) && jsonStr[i:i+4] == "true" {
-				tokens = append(tokens, struct {
-					content string
-					typ     tokenType
-				}{content: "true", typ: tokenBoolean})
-				i += 4
-			} else {
-				tokens = append(tokens, struct {
-					content string
-					typ     tokenType
-				}{content: string(c), typ: tokenOther})
-				i++
-			}
-		case 'f':
-			// false
-			if i+4 < len(jsonStr) && jsonStr[i:i+5] == "false" {
-				tokens = append(tokens, struct {
-					content string
-					typ     tokenType
-				}{content: "false", typ: tokenBoolean})
-				i += 5
-			} else {
-				tokens = append(tokens, struct {
-					content string
-					typ     tokenType
-				}{content: string(c), typ: tokenOther})
-				i++
-			}
-		case 'n':
-			// null
-			if i+3 < len(jsonStr) && jsonStr[i:i+4] == "null" {
-				tokens = append(tokens, struct {
-					content string
-					typ     tokenType
-				}{content: "null", typ: tokenNull})
-				i += 4
-			} else {
-				tokens = append(tokens, struct {
-					content string
-					typ     tokenType
-				}{content: string(c), typ: tokenOther})
-				i++
-			}
-		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-':
-			// Number
-			start := i
-			for i < len(jsonStr) && ((jsonStr[i] >= '0' && jsonStr[i] <= '9') ||
-				jsonStr[i] == '.' || jsonStr[i] == 'e' || jsonStr[i] == 'E' ||
-				jsonStr[i] == '+' || jsonStr[i] == '-') {
-				i++
-			}
-			tokens = append(tokens, struct {
-				content string
-				typ     tokenType
-			}{content: jsonStr[start:i], typ: tokenNumber})
-		default:
-			tokens = append(tokens, struct {
-				content string
-				typ     tokenType
-			}{content: string(c), typ: tokenOther})
-			i++
+	// Write source if available
+	if r.PC != 0 {
+		fs := runtime.CallersFrames([]uintptr{r.PC})
+		f, _ := fs.Next()
+		switch h.Source {
+		case SrcFull:
+			buf.WriteString(`"source":{"function":"` + f.Function + `","file":"` + f.File + `","line":` + strconv.Itoa(f.Line) + `}`)
+		case SrcShortFile:
+			cJSON(buf, "file", filepath.Base(f.File)+":"+strconv.Itoa(f.Line), h.ColorScheme.Key, bWhiteColor)
+		case SrcLongFile:
+			cJSON(buf, "file", f.File+":"+strconv.Itoa(f.Line), h.ColorScheme.Key, bWhiteColor)
 		}
 	}
 
-	// Second pass: colorize tokens
-	for _, token := range tokens {
-		switch token.typ {
-		case tokenBrace:
-			result.WriteString(string(colors.Brace) + token.content + string(Reset))
-		case tokenKey:
-			result.WriteString(string(colors.Key) + token.content + string(Reset))
-		case tokenString:
-			result.WriteString(string(colors.String) + token.content + string(Reset))
-		case tokenNumber:
-			result.WriteString(string(colors.Number) + token.content + string(Reset))
-		case tokenBoolean:
-			result.WriteString(string(colors.Boolean) + token.content + string(Reset))
-		case tokenNull:
-			result.WriteString(string(colors.Null) + token.content + string(Reset))
-		case tokenLevel:
-			// Apply the appropriate color based on the log level
-			levelContent := strings.Trim(token.content, "\"")
-			switch levelContent {
-			case "INFO":
-				result.WriteString(string(colors.LevelInfo) + token.content + string(Reset))
-			case "DEBUG":
-				result.WriteString(string(colors.LevelDebug) + token.content + string(Reset))
-			case "WARN":
-				result.WriteString(string(colors.LevelWarn) + token.content + string(Reset))
-			case "ERROR":
-				result.WriteString(string(colors.LevelError) + token.content + string(Reset))
-			default:
-				result.WriteString(token.content)
-			}
-		default:
-			result.WriteString(token.content)
-		}
+	// Write attributes
+	if r.NumAttrs() > 0 {
+		r.Attrs(func(a slog.Attr) bool {
+			cJSON(buf, a.Key, a.Value.Any(), h.ColorScheme.Key, bWhiteColor)
+			return true
+		})
 	}
 
-	return result.String()
+	return strings.TrimRight(buf.String(), ",") + "}\n"
 }
 
-// isLogLevel checks if a string is a valid log level
-func isLogLevel(s string) bool {
-	return s == "INFO" || s == "DEBUG" || s == "WARN" || s == "ERROR"
+// cJSON will write the key/value to the buffer based on the defined Color pattern
+func cJSON(buf *strings.Builder, key string, value any, keyColor, valueColor TerminalColor) {
+	buf.WriteString(string(keyColor) + `"` + key + `"` + string(reset) + `:`) // key
+
+	switch v := value.(type) {
+	case string:
+		buf.WriteString(string(valueColor) + `"` + v + `"` + string(reset) + `,`)
+	case int64, int32, int16, int8, int,
+		uint64, uint32, uint16, uint8, uint,
+		float64, float32, bool:
+		buf.WriteString(string(valueColor) + fmt.Sprintf("%v", v) + string(reset) + `,`)
+	case nil:
+		buf.WriteString(string(valueColor) + "null" + string(reset) + `,`)
+	default:
+		// Convert anything else to string with quotes
+		buf.WriteString(string(valueColor) + `"` + fmt.Sprint(v) + `"` + string(reset) + `,`)
+	}
 }
+
+var (
+	ColorDefault = Colors{
+		String:     whiteColor,  // All values white
+		Number:     whiteColor,  // All values white
+		Boolean:    whiteColor,  // All values white
+		Null:       whiteColor,  // All values white
+		Key:        grayColor,   // All keys gray
+		Brace:      bBlueColor,  // Keep braces blue for readability
+		LevelInfo:  greenColor,  // info - green
+		LevelDebug: whiteColor,  // debug - white
+		LevelWarn:  yellowColor, // warn - yellow
+		LevelError: redColor,    // error - red
+	}
+	Colorful = Colors{
+		String:     greenColor,
+		Number:     yellowColor,
+		Boolean:    magentaColor,
+		Null:       whiteColor,
+		Key:        cyanColor,
+		Brace:      bBlueColor,
+		LevelInfo:  bWhiteColor,
+		LevelDebug: bCyanColor,
+		LevelWarn:  bYellowColor,
+		LevelError: bRedColor,
+	}
+	NoColor = Colors{}
+)
+
+type SrcFormat int
+
+const (
+	SrcFull      SrcFormat = 1 + iota // {"source":{"function":"repo/package.function","file":"a/c/d/file.go","line":26`}
+	SrcShortFile                      // {"file":"file.go:26"} see log.LshortFile
+	SrcLongFile                       // {"file":"a/c/d/file.go:26"} see log.LlongFile
+)
