@@ -1,11 +1,9 @@
 package colorjson
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"path/filepath"
 	"runtime"
@@ -67,9 +65,11 @@ type Colors struct {
 
 // ColorJSONHandler is a custom handler that produces colorized JSON output
 type ColorJSONHandler struct {
-	//Colors Colors // allows for customizing colors
-	out io.Writer
 	HandlerOptions
+
+	out    io.Writer
+	attrs  []slog.Attr // persistent attributes from WithAttrs
+	groups []string    // group hierarchy from WithGroup
 }
 
 // HandlerOptions is a custom options struct that extends slog.HandlerOptions
@@ -113,8 +113,10 @@ func NewHandler(w io.Writer, opts *HandlerOptions) *ColorJSONHandler {
 
 // Enabled implements slog.Handler.
 func (h *ColorJSONHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return true
-	// TODO implement
+	if h.Level == nil {
+		return level >= slog.LevelInfo
+	}
+	return level >= h.Level.Level()
 }
 
 // Handle implements slog.Handler.
@@ -123,29 +125,40 @@ func (h *ColorJSONHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	// Write the colorized JSON to the output
 	_, err := fmt.Fprint(h.out, colorized)
-	//h.buffer.Reset()
 	return err
 }
 
 // WithAttrs implements slog.Handler.
 func (h *ColorJSONHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	// Create a copy of existing attributes and append new ones
+	newAttrs := make([]slog.Attr, len(h.attrs), len(h.attrs)+len(attrs))
+	copy(newAttrs, h.attrs)
+	newAttrs = append(newAttrs, attrs...)
+
 	return &ColorJSONHandler{
 		out:            h.out,
 		HandlerOptions: h.HandlerOptions,
-		// baseHandler:    h.baseHandler.WithAttrs(attrs),
+		attrs:          newAttrs,
+		groups:         append([]string(nil), h.groups...), // copy group hierarchy
 	}
 }
 
 // WithGroup implements slog.Handler.
 func (h *ColorJSONHandler) WithGroup(name string) slog.Handler {
+	// Create a copy of existing groups and append new group
+	newGroups := make([]string, len(h.groups), len(h.groups)+1)
+	copy(newGroups, h.groups)
+	newGroups = append(newGroups, name)
+
 	return &ColorJSONHandler{
 		out:            h.out,
 		HandlerOptions: h.HandlerOptions,
-		//baseHandler:    h.baseHandler.WithGroup(name),
+		attrs:          append([]slog.Attr(nil), h.attrs...), // copy persistent attributes
+		groups:         newGroups,
 	}
 }
 
-func (h *HandlerOptions) coloredJSON(r slog.Record, colors Colors) string {
+func (h *ColorJSONHandler) coloredJSON(r slog.Record, colors Colors) string {
 	buf := &strings.Builder{}
 	buf.WriteString("{")
 
@@ -181,15 +194,88 @@ func (h *HandlerOptions) coloredJSON(r slog.Record, colors Colors) string {
 		}
 	}
 
-	// Write attributes
+	// Helper function to write attributes, handling grouping
+	writeAttrs := func(attrs []slog.Attr, groups []string) {
+		if len(groups) == 0 {
+			// No groups - write attributes directly
+			for _, attr := range attrs {
+				if h.ReplaceAttr != nil {
+					attr = h.ReplaceAttr(nil, attr)
+				}
+				if attr.Value.Kind() == slog.KindGroup {
+					// Handle group attribute
+					buf.WriteString(string(h.ColorScheme.Key) + `"` + attr.Key + `"` + string(reset) + `:{`)
+					for _, groupAttr := range attr.Value.Group() {
+						if h.ReplaceAttr != nil {
+							groupAttr = h.ReplaceAttr(nil, groupAttr)
+						}
+						cJSON(buf, groupAttr.Key, groupAttr.Value.Any(), h.ColorScheme.Key, bWhiteColor)
+					}
+					// Remove the last character (trailing comma)
+					content := buf.String()
+					buf.Reset()
+					buf.WriteString(content[:len(content)-1])
+					buf.WriteString("},")
+					continue
+				}
+				cJSON(buf, attr.Key, attr.Value.Any(), h.ColorScheme.Key, bWhiteColor)
+			}
+		} else {
+			// Build nested group structure
+			h.writeGroupedAttrs(buf, attrs, groups, 0)
+		}
+	}
+
+	// Write persistent attributes (from WithAttrs) - always at top level
+	if len(h.attrs) > 0 {
+		for _, attr := range h.attrs {
+			if h.ReplaceAttr != nil {
+				attr = h.ReplaceAttr(nil, attr)
+			}
+			cJSON(buf, attr.Key, attr.Value.Any(), h.ColorScheme.Key, bWhiteColor)
+		}
+	}
+
+	// Write record attributes - grouped if there are groups
 	if r.NumAttrs() > 0 {
+		var recordAttrs []slog.Attr
 		r.Attrs(func(a slog.Attr) bool {
-			cJSON(buf, a.Key, a.Value.Any(), h.ColorScheme.Key, bWhiteColor)
+			recordAttrs = append(recordAttrs, a)
 			return true
 		})
+		writeAttrs(recordAttrs, h.groups)
 	}
 
 	return strings.TrimRight(buf.String(), ",") + "}\n"
+}
+
+// writeGroupedAttrs writes attributes with proper group nesting
+func (h *ColorJSONHandler) writeGroupedAttrs(buf *strings.Builder, attrs []slog.Attr, groups []string, depth int) {
+	if depth >= len(groups) {
+		// No more groups - write attributes directly
+		for _, attr := range attrs {
+			if h.ReplaceAttr != nil {
+				attr = h.ReplaceAttr(groups, attr)
+			}
+			cJSON(buf, attr.Key, attr.Value.Any(), h.ColorScheme.Key, bWhiteColor)
+		}
+		return
+	}
+
+	// Create nested group object
+	groupName := groups[depth]
+	buf.WriteString(string(h.ColorScheme.Key) + `"` + groupName + `"` + string(reset) + `:{`)
+
+	// Recursively write the rest
+	h.writeGroupedAttrs(buf, attrs, groups, depth+1)
+
+	// Close the group, removing trailing comma first
+	content := buf.String()
+	if strings.HasSuffix(content, ",") {
+		buf.Reset()
+		buf.WriteString(content[:len(content)-1])
+	}
+	buf.WriteString("},")
 }
 
 // cJSON will write the key/value to the buffer based on the defined Color pattern
