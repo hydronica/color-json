@@ -2,6 +2,7 @@ package colorjson
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -41,35 +42,38 @@ func TestOutput(t *testing.T) {
 		{slog.LevelWarn, "WARN"},
 		{slog.LevelError, "ERROR"},
 	}
+	names := []string{"Default", "ColorFul", "No Color"}
+	for i, c := range []Colors{ColorDefault, Colorful, NoColor} {
+		fmt.Println(names[i])
+		for _, l := range levels {
+			buf := new(bytes.Buffer)
+			h := NewHandler(buf, &HandlerOptions{Source: SrcShortFile, Colors: c})
+			pc, _, _, _ := runtime.Caller(0)
+			rec := slog.NewRecord(time.Now(), l.level, "Test message for "+l.levelStr, pc)
+			rec.AddAttrs(
+				// Add a variety of types
+				slog.Int("int", 42),
+				slog.Float64("float", 3.14),
+				slog.Bool("bool", true),
+				slog.String("string", "hello world"),
+			)
 
-	for _, l := range levels {
-		buf := new(bytes.Buffer)
-		h := NewHandler(buf, &HandlerOptions{Source: SrcShortFile, ColorScheme: ColorDefault})
-		pc, _, _, _ := runtime.Caller(0)
-		rec := slog.NewRecord(time.Now(), l.level, "Test message for "+l.levelStr, pc)
-		rec.AddAttrs(
-			// Add a variety of types
-			slog.Int("int", 42),
-			slog.Float64("float", 3.14),
-			slog.Bool("bool", true),
-			slog.String("string", "hello world"),
-		)
+			// Add a group for http
+			rec.AddAttrs(
+				slog.Group("http",
+					slog.String("method", "GET"),
+					slog.String("path", "/api/v1/users"),
+					slog.Int("status", 200),
+				),
+			)
+			if err := h.Handle(nil, rec); err != nil {
+				t.Fatal(err)
+			}
 
-		// Add a group for http
-		rec.AddAttrs(
-			slog.Group("http",
-				slog.String("method", "GET"),
-				slog.String("path", "/api/v1/users"),
-				slog.Int("status", 200),
-			),
-		)
-		if err := h.Handle(nil, rec); err != nil {
-			t.Fatal(err)
+			// Print to stdout for visual inspection
+			os.Stdout.Write(buf.Bytes())
+
 		}
-
-		// Print to stdout for visual inspection
-		os.Stdout.Write(buf.Bytes())
-
 	}
 }
 
@@ -90,7 +94,7 @@ func TestColoredJSON(t *testing.T) {
 		h := &ColorJSONHandler{
 			HandlerOptions: in.Opts,
 		}
-		out := h.coloredJSON(in.Rec, ColorDefault)
+		out := h.coloredJSON(in.Rec)
 		return regRmColors.ReplaceAllString(out, ""), nil
 	}
 

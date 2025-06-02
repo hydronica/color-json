@@ -29,13 +29,11 @@ import (
 
 func main() {
 	// Create a new colorized JSON handler
-	handler := colorjson.NewHandler(os.Stderr, &slog.HandlerOptions{
+	handler := colorjson.NewHandler(os.Stderr, 
+	&slog.HandlerOptions{
 		Level: slog.LevelDebug, // Set minimum level
+		Source: slog.SrcShortFile, 
 	})
-	// customize colors
-	handler.Colors.Brace = colorjson.GrayColor
-	// background red, white text
-	handler.Colors.LevelError = colorjson.BgRedColor + colorjson.WhiteColor
 
 	// Create a logger with the handler
 	logger := slog.New(handler)
