@@ -51,12 +51,15 @@ const (
 
 // Colors is a struct that contains the ANSI color codes for JSON syntax highlighting
 type Colors struct {
-	String     TerminalColor // string color
-	Number     TerminalColor // number color
-	Boolean    TerminalColor // boolean color
-	Null       TerminalColor // null color
-	Key        TerminalColor // key color
-	Brace      TerminalColor // brace color
+	//String     TerminalColor // string color
+	//Number     TerminalColor // number color
+	//Boolean    TerminalColor // boolean color
+	//Null       TerminalColor // null color
+	Default  TerminalColor // default color
+	Message  TerminalColor
+	DateTime TerminalColor
+	Key      TerminalColor // key color
+	//Brace      TerminalColor // brace color
 	LevelInfo  TerminalColor // level info color
 	LevelDebug TerminalColor // level debug color
 	LevelWarn  TerminalColor // level warn color
@@ -89,16 +92,16 @@ type HandlerOptions struct {
 	// If empty, time.TimeOnly will be used
 	TimeFormat string
 
-	// ColorScheme defines preset color schemes
+	// Colors defines preset color schemes
 	// Valid values are: "default", "tint", "monochrome"
-	ColorScheme Colors
+	Colors Colors
 }
 
 // NewHandler creates a new handler for colorized JSON output
 func NewHandler(w io.Writer, opts *HandlerOptions) *ColorJSONHandler {
 	if opts == nil {
 		opts = &HandlerOptions{
-			ColorScheme: ColorDefault,
+			Colors: ColorDefault,
 		}
 	}
 	if opts.TimeFormat == "" {
@@ -121,7 +124,7 @@ func (h *ColorJSONHandler) Enabled(ctx context.Context, level slog.Level) bool {
 
 // Handle implements slog.Handler.
 func (h *ColorJSONHandler) Handle(ctx context.Context, r slog.Record) error {
-	colorized := h.coloredJSON(r, h.ColorScheme)
+	colorized := h.coloredJSON(r)
 
 	// Write the colorized JSON to the output
 	_, err := fmt.Fprint(h.out, colorized)
@@ -158,27 +161,27 @@ func (h *ColorJSONHandler) WithGroup(name string) slog.Handler {
 	}
 }
 
-func (h *ColorJSONHandler) coloredJSON(r slog.Record, colors Colors) string {
+func (h *ColorJSONHandler) coloredJSON(r slog.Record) string {
 	buf := &strings.Builder{}
 	buf.WriteString("{")
 
 	// Write time
-	cJSON(buf, "time", r.Time.Format(h.TimeFormat), h.ColorScheme.Key, bWhiteColor)
+	cJSON(buf, "time", r.Time.Format(h.TimeFormat), h.Colors.Key, h.Colors.DateTime)
 
 	// Write level
 	switch r.Level {
 	case slog.LevelInfo:
-		cJSON(buf, "level", r.Level.String(), h.ColorScheme.Key, h.ColorScheme.LevelInfo)
+		cJSON(buf, "level", r.Level.String(), h.Colors.Key, h.Colors.LevelInfo)
 	case slog.LevelDebug:
-		cJSON(buf, "level", r.Level.String(), h.ColorScheme.Key, h.ColorScheme.LevelDebug)
+		cJSON(buf, "level", r.Level.String(), h.Colors.Key, h.Colors.LevelDebug)
 	case slog.LevelWarn:
-		cJSON(buf, "level", r.Level.String(), h.ColorScheme.Key, h.ColorScheme.LevelWarn)
+		cJSON(buf, "level", r.Level.String(), h.Colors.Key, h.Colors.LevelWarn)
 	case slog.LevelError:
-		cJSON(buf, "level", r.Level.String(), h.ColorScheme.Key, h.ColorScheme.LevelError)
+		cJSON(buf, "level", r.Level.String(), h.Colors.Key, h.Colors.LevelError)
 	}
 
 	// Write message
-	cJSON(buf, "msg", r.Message, h.ColorScheme.Key, bWhiteColor)
+	cJSON(buf, "msg", r.Message, h.Colors.Key, h.Colors.Message)
 
 	// Write source if available
 	if r.PC != 0 {
@@ -188,9 +191,9 @@ func (h *ColorJSONHandler) coloredJSON(r slog.Record, colors Colors) string {
 		case SrcFull:
 			buf.WriteString(`"source":{"function":"` + f.Function + `","file":"` + f.File + `","line":` + strconv.Itoa(f.Line) + `}`)
 		case SrcShortFile:
-			cJSON(buf, "file", filepath.Base(f.File)+":"+strconv.Itoa(f.Line), h.ColorScheme.Key, bWhiteColor)
+			cJSON(buf, "file", filepath.Base(f.File)+":"+strconv.Itoa(f.Line), h.Colors.Key, h.Colors.Default)
 		case SrcLongFile:
-			cJSON(buf, "file", f.File+":"+strconv.Itoa(f.Line), h.ColorScheme.Key, bWhiteColor)
+			cJSON(buf, "file", f.File+":"+strconv.Itoa(f.Line), h.Colors.Key, h.Colors.Default)
 		}
 	}
 
@@ -204,12 +207,12 @@ func (h *ColorJSONHandler) coloredJSON(r slog.Record, colors Colors) string {
 				}
 				if attr.Value.Kind() == slog.KindGroup {
 					// Handle group attribute
-					buf.WriteString(string(h.ColorScheme.Key) + `"` + attr.Key + `"` + string(reset) + `:{`)
+					buf.WriteString(string(h.Colors.Key) + `"` + attr.Key + `"` + string(reset) + `:{`)
 					for _, groupAttr := range attr.Value.Group() {
 						if h.ReplaceAttr != nil {
 							groupAttr = h.ReplaceAttr(nil, groupAttr)
 						}
-						cJSON(buf, groupAttr.Key, groupAttr.Value.Any(), h.ColorScheme.Key, bWhiteColor)
+						cJSON(buf, groupAttr.Key, groupAttr.Value.Any(), h.Colors.Key, h.Colors.Default)
 					}
 					// Remove the last character (trailing comma)
 					content := buf.String()
@@ -218,7 +221,7 @@ func (h *ColorJSONHandler) coloredJSON(r slog.Record, colors Colors) string {
 					buf.WriteString("},")
 					continue
 				}
-				cJSON(buf, attr.Key, attr.Value.Any(), h.ColorScheme.Key, bWhiteColor)
+				cJSON(buf, attr.Key, attr.Value.Any(), h.Colors.Key, h.Colors.Default)
 			}
 		} else {
 			// Build nested group structure
@@ -232,7 +235,7 @@ func (h *ColorJSONHandler) coloredJSON(r slog.Record, colors Colors) string {
 			if h.ReplaceAttr != nil {
 				attr = h.ReplaceAttr(nil, attr)
 			}
-			cJSON(buf, attr.Key, attr.Value.Any(), h.ColorScheme.Key, bWhiteColor)
+			cJSON(buf, attr.Key, attr.Value.Any(), h.Colors.Key, bWhiteColor)
 		}
 	}
 
@@ -257,14 +260,14 @@ func (h *ColorJSONHandler) writeGroupedAttrs(buf *strings.Builder, attrs []slog.
 			if h.ReplaceAttr != nil {
 				attr = h.ReplaceAttr(groups, attr)
 			}
-			cJSON(buf, attr.Key, attr.Value.Any(), h.ColorScheme.Key, bWhiteColor)
+			cJSON(buf, attr.Key, attr.Value.Any(), h.Colors.Key, h.Colors.Default)
 		}
 		return
 	}
 
 	// Create nested group object
 	groupName := groups[depth]
-	buf.WriteString(string(h.ColorScheme.Key) + `"` + groupName + `"` + string(reset) + `:{`)
+	buf.WriteString(string(h.Colors.Key) + `"` + groupName + `"` + string(reset) + `:{`)
 
 	// Recursively write the rest
 	h.writeGroupedAttrs(buf, attrs, groups, depth+1)
@@ -299,24 +302,19 @@ func cJSON(buf *strings.Builder, key string, value any, keyColor, valueColor Ter
 
 var (
 	ColorDefault = Colors{
-		String:     whiteColor,  // All values white
-		Number:     whiteColor,  // All values white
-		Boolean:    whiteColor,  // All values white
-		Null:       whiteColor,  // All values white
-		Key:        grayColor,   // All keys gray
-		Brace:      bBlueColor,  // Keep braces blue for readability
-		LevelInfo:  greenColor,  // info - green
-		LevelDebug: whiteColor,  // debug - white
-		LevelWarn:  yellowColor, // warn - yellow
-		LevelError: redColor,    // error - red
+		Key:        grayColor, // All keys gray
+		Default:    grayColor,
+		DateTime:   orangeColor,
+		Message:    orangeColor,
+		LevelInfo:  whiteColor,   // info - green
+		LevelDebug: bWhiteColor,  // debug - white
+		LevelWarn:  bYellowColor, // warn - yellow
+		LevelError: bRedColor,    // error - red
 	}
 	Colorful = Colors{
-		String:     greenColor,
-		Number:     yellowColor,
-		Boolean:    magentaColor,
-		Null:       whiteColor,
-		Key:        cyanColor,
-		Brace:      bBlueColor,
+		Key:        tealColor,
+		DateTime:   purpleColor,
+		Message:    redColor,
 		LevelInfo:  bWhiteColor,
 		LevelDebug: bCyanColor,
 		LevelWarn:  bYellowColor,
