@@ -3,6 +3,7 @@ package colorjson
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -90,10 +91,7 @@ func TestColoredJSON(t *testing.T) {
 	regRmColors := regexp.MustCompile(`\033\[[0-9;]+m`)
 
 	testFn := func(in input) (string, error) {
-		// Create a handler with the options
-		h := &ColorJSONHandler{
-			HandlerOptions: in.Opts,
-		}
+		h := NewHandler(io.Discard, &in.Opts)
 		out := h.coloredJSON(in.Rec)
 		return regRmColors.ReplaceAllString(out, ""), nil
 	}
@@ -179,11 +177,7 @@ func TestEnabled(t *testing.T) {
 		logLevel     slog.Level
 	}
 	testFn := func(in input) (bool, error) {
-		h := &ColorJSONHandler{
-			HandlerOptions: HandlerOptions{
-				Level: in.handlerLevel,
-			},
-		}
+		h := NewHandler(nil, &HandlerOptions{Level: in.handlerLevel})
 		return h.Enabled(nil, in.logLevel), nil
 	}
 	cases := trial.Cases[input, bool]{
@@ -220,7 +214,7 @@ func TestEnabled(t *testing.T) {
 }
 
 func TestWithAttrsAndWithGroup(t *testing.T) {
-	baseHandler := &ColorJSONHandler{HandlerOptions: HandlerOptions{TimeFormat: time.DateOnly}}
+	baseHandler := NewHandler(nil, &HandlerOptions{TimeFormat: time.DateOnly})
 
 	testFn := func(in slog.Handler) (string, error) {
 		buf := new(bytes.Buffer)

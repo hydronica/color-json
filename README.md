@@ -82,7 +82,14 @@ The output will be colorized JSON with:
 
 ## Terminal Support
 
-The colorization uses ANSI escape codes, which are supported by most modern terminals. If you're redirecting output to a file or using a terminal that doesn't support colors, you might see the raw ANSI codes.
+The handler automatically detects whether the terminal supports color. Colors are disabled when:
+
+- `NO_COLOR` is set (see [no-color.org](https://no-color.org/))
+- `TERM` is empty or set to `dumb`
+
+Set `FORCE_COLOR` to enable colors even when the terminal would otherwise be treated as non-color.
+
+When color is disabled, output is plain JSON with no ANSI escape codes.
 
 ## License
 
