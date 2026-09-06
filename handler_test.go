@@ -263,6 +263,7 @@ func TestWithAttrsAndWithGroup(t *testing.T) {
 		Handler       slog.Handler
 		Msg           string
 		NoRecordAttrs bool
+		RecordAttrs   []slog.Attr
 	}
 
 	testFn := func(in input) (string, error) {
@@ -277,7 +278,10 @@ func TestWithAttrsAndWithGroup(t *testing.T) {
 			msg = "hello world"
 		}
 		rec := slog.NewRecord(testTime, slog.LevelInfo, msg, pc)
-		if !in.NoRecordAttrs {
+		switch {
+		case in.RecordAttrs != nil:
+			rec.AddAttrs(in.RecordAttrs...)
+		case !in.NoRecordAttrs:
 			rec.AddAttrs(
 				slog.String("method", "POST"),
 				slog.Int("status", 200),
@@ -329,51 +333,27 @@ func TestWithAttrsAndWithGroup(t *testing.T) {
 			},
 			Expected: `{"time":"2024-05-28","level":"INFO","msg":"request","service":"api","http":{"method":"GET"}}` + "\n",
 		},
+		"group then attrs with record attrs": {
+			Input: input{
+				Handler: baseHandler.WithGroup("http").WithAttrs([]slog.Attr{
+					slog.String("method", "GET"),
+				}),
+				RecordAttrs: []slog.Attr{slog.Int("status", 200)},
+			},
+			Expected: `{"time":"2024-05-28","level":"INFO","msg":"hello world","http":{"method":"GET","status":200}}` + "\n",
+		},
+		"group then attrs without record attrs": {
+			Input: input{
+				Handler: baseHandler.WithGroup("http").WithAttrs([]slog.Attr{
+					slog.String("method", "GET"),
+				}),
+				NoRecordAttrs: true,
+			},
+			Expected: `{"time":"2024-05-28","level":"INFO","msg":"hello world","http":{"method":"GET"}}` + "\n",
+		},
 	}
 
 	trial.New(testFn, cases).Test(t)
-}
-
-func TestWithGroupThenAttrs(t *testing.T) {
-	base := NewHandler(nil, &HandlerOptions{TimeFormat: time.DateOnly})
-	testTime := time.Date(2024, 5, 28, 12, 34, 56, 0, time.UTC)
-
-	t.Run("persistent attrs in group with record attrs", func(t *testing.T) {
-		buf := new(bytes.Buffer)
-		h := base.WithGroup("http").WithAttrs([]slog.Attr{slog.String("method", "GET")})
-		handler := h.(*ColorJSONHandler)
-		handler.out = buf
-
-		rec := slog.NewRecord(testTime, slog.LevelInfo, "hello world", 0)
-		rec.AddAttrs(slog.Int("status", 200))
-		if err := handler.Handle(nil, rec); err != nil {
-			t.Fatal(err)
-		}
-
-		got := regRmColors.ReplaceAllString(buf.String(), "")
-		want := `{"time":"2024-05-28","level":"INFO","msg":"hello world","http":{"method":"GET","status":200}}` + "\n"
-		if got != want {
-			t.Fatalf("got %q want %q", got, want)
-		}
-	})
-
-	t.Run("persistent attrs in group without record attrs", func(t *testing.T) {
-		buf := new(bytes.Buffer)
-		h := base.WithGroup("http").WithAttrs([]slog.Attr{slog.String("method", "GET")})
-		handler := h.(*ColorJSONHandler)
-		handler.out = buf
-
-		rec := slog.NewRecord(testTime, slog.LevelInfo, "hello world", 0)
-		if err := handler.Handle(nil, rec); err != nil {
-			t.Fatal(err)
-		}
-
-		got := regRmColors.ReplaceAllString(buf.String(), "")
-		want := `{"time":"2024-05-28","level":"INFO","msg":"hello world","http":{"method":"GET"}}` + "\n"
-		if got != want {
-			t.Fatalf("got %q want %q", got, want)
-		}
-	})
 }
 
 func TestJSONValidity(t *testing.T) {
@@ -402,7 +382,9 @@ func TestReplaceAttr(t *testing.T) {
 	testTime := time.Date(2024, 5, 28, 12, 34, 56, 0, time.UTC)
 
 	type input struct {
-		variant string
+		Opts        HandlerOptions
+		Rec         slog.Record
+		collectKeys bool
 	}
 
 	type result struct {
@@ -412,115 +394,117 @@ func TestReplaceAttr(t *testing.T) {
 
 	testFn := func(in input) (result, error) {
 		var keys []string
-		var opts HandlerOptions
-		var rec slog.Record
-
-		switch in.variant {
-		case "builtins":
-			opts = HandlerOptions{
-				TimeFormat: time.RFC3339,
-				ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-					switch a.Key {
-					case "time":
-						return slog.Attr{}
-					case "msg":
-						return slog.String("message", a.Value.String())
-					}
-					return a
-				},
+		opts := in.Opts
+		origRA := opts.ReplaceAttr
+		opts.ReplaceAttr = func(groups []string, a slog.Attr) slog.Attr {
+			if in.collectKeys {
+				keys = append(keys, a.Key)
 			}
-			rec = slog.NewRecord(testTime, slog.LevelInfo, "hello", 0)
-		case "skips group attrs":
-			opts = HandlerOptions{
-				TimeFormat: time.DateOnly,
-				ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-					keys = append(keys, a.Key)
-					return a
-				},
+			if origRA != nil {
+				return origRA(groups, a)
 			}
-			rec = slog.NewRecord(testTime, slog.LevelInfo, "hello", 0)
-			rec.AddAttrs(slog.Group("http", slog.String("method", "GET")))
-		case "custom levels":
-			opts = HandlerOptions{
-				TimeFormat: time.RFC3339,
-				ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-					if a.Key == slog.TimeKey {
-						return slog.Attr{}
-					}
-					if a.Key == slog.LevelKey {
-						a.Key = "sev"
-						level := a.Value.Any().(slog.Level)
-						if level >= slog.LevelError {
-							a.Value = slog.StringValue("ERROR")
-						} else {
-							a.Value = slog.StringValue("INFO")
-						}
-					}
-					return a
-				},
-			}
-			rec = slog.NewRecord(testTime, slog.LevelError, "failed", 0)
-		case "time is KindTime":
-			opts = HandlerOptions{
-				TimeFormat: time.RFC3339,
-				ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-					if a.Key == slog.TimeKey {
-						return slog.String("ts", a.Value.Time().UTC().Format(time.DateOnly))
-					}
-					return a
-				},
-			}
-			rec = slog.NewRecord(testTime, slog.LevelInfo, "hello", 0)
-		case "source is *slog.Source":
-			opts = HandlerOptions{
-				TimeFormat: time.DateOnly,
-				Source:     SrcFull,
-				ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-					if a.Key == slog.SourceKey {
-						src := a.Value.Any().(*slog.Source)
-						return slog.String("src", filepath.Base(src.File)+":"+strconv.Itoa(src.Line))
-					}
-					return a
-				},
-			}
-			rec = slog.NewRecord(testTime, slog.LevelInfo, "hello", pc)
-		default:
-			return result{}, fmt.Errorf("unknown variant %q", in.variant)
+			return a
 		}
 
 		h := NewHandler(io.Discard, &opts)
-		out := regRmColors.ReplaceAllString(h.coloredJSON(rec), "")
+		out := regRmColors.ReplaceAllString(h.coloredJSON(in.Rec), "")
 		return result{Output: out, Keys: keys}, nil
 	}
 
 	cases := trial.Cases[input, result]{
 		"builtins": {
-			Input: input{variant: "builtins"},
+			Input: input{
+				Opts: HandlerOptions{
+					TimeFormat: time.RFC3339,
+					ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+						switch a.Key {
+						case "time":
+							return slog.Attr{}
+						case "msg":
+							return slog.String("message", a.Value.String())
+						}
+						return a
+					},
+				},
+				Rec: slog.NewRecord(testTime, slog.LevelInfo, "hello", 0),
+			},
 			Expected: result{
 				Output: `{"level":"INFO","message":"hello"}` + "\n",
 			},
 		},
 		"skips group attrs": {
-			Input: input{variant: "skips group attrs"},
+			Input: input{
+				Opts:        HandlerOptions{TimeFormat: time.DateOnly},
+				Rec: func() slog.Record {
+					rec := slog.NewRecord(testTime, slog.LevelInfo, "hello", 0)
+					rec.AddAttrs(slog.Group("http", slog.String("method", "GET")))
+					return rec
+				}(),
+				collectKeys: true,
+			},
 			Expected: result{
 				Output: `{"time":"2024-05-28","level":"INFO","msg":"hello","http":{"method":"GET"}}` + "\n",
 				Keys:   []string{"time", "level", "msg", "method"},
 			},
 		},
 		"custom levels": {
-			Input: input{variant: "custom levels"},
+			Input: input{
+				Opts: HandlerOptions{
+					TimeFormat: time.RFC3339,
+					ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+						if a.Key == slog.TimeKey {
+							return slog.Attr{}
+						}
+						if a.Key == slog.LevelKey {
+							a.Key = "sev"
+							level := a.Value.Any().(slog.Level)
+							if level >= slog.LevelError {
+								a.Value = slog.StringValue("ERROR")
+							} else {
+								a.Value = slog.StringValue("INFO")
+							}
+						}
+						return a
+					},
+				},
+				Rec: slog.NewRecord(testTime, slog.LevelError, "failed", 0),
+			},
 			Expected: result{
 				Output: `{"sev":"ERROR","msg":"failed"}` + "\n",
 			},
 		},
 		"time is KindTime": {
-			Input: input{variant: "time is KindTime"},
+			Input: input{
+				Opts: HandlerOptions{
+					TimeFormat: time.RFC3339,
+					ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+						if a.Key == slog.TimeKey {
+							return slog.String("ts", a.Value.Time().UTC().Format(time.DateOnly))
+						}
+						return a
+					},
+				},
+				Rec: slog.NewRecord(testTime, slog.LevelInfo, "hello", 0),
+			},
 			Expected: result{
 				Output: `{"ts":"2024-05-28","level":"INFO","msg":"hello"}` + "\n",
 			},
 		},
 		"source is *slog.Source": {
-			Input: input{variant: "source is *slog.Source"},
+			Input: input{
+				Opts: HandlerOptions{
+					TimeFormat: time.DateOnly,
+					Source:     SrcFull,
+					ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+						if a.Key == slog.SourceKey {
+							src := a.Value.Any().(*slog.Source)
+							return slog.String("src", filepath.Base(src.File)+":"+strconv.Itoa(src.Line))
+						}
+						return a
+					},
+				},
+				Rec: slog.NewRecord(testTime, slog.LevelInfo, "hello", pc),
+			},
 			Expected: result{
 				Output: `{"time":"2024-05-28","level":"INFO","msg":"hello","src":"` + sFile + ":" + line + `"}` + "\n",
 			},
