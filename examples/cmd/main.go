@@ -8,22 +8,17 @@ import (
 )
 
 func main() {
-	// Create a new colorized JSON handler
-	handler := colorjson.NewHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug, // Set minimum level
+	colors := colorjson.ColorDefault
+	colors.LevelError = colorjson.TerminalColor("\033[41m\033[37m") // white on red background
+
+	handler := colorjson.NewHandler(os.Stderr, &colorjson.HandlerOptions{
+		Level:  slog.LevelDebug,
+		Colors: colors,
 	})
-	// customize colors
-	handler.Colors.Brace = colorjson.GrayColor
-	// background red, white text
-	handler.Colors.LevelError = colorjson.BgRedColor + colorjson.WhiteColor
 
-	// Create a logger with the handler
 	logger := slog.New(handler)
-
-	// Set as the default logger
 	slog.SetDefault(logger)
 
-	// Example log messages
 	slog.Info("Server started", "addr", ":8080")
 	slog.Debug("Detailed debug message", "value", 123)
 	slog.Debug(`Testing null & escaped quotes: "`, "value", nil)

@@ -73,15 +73,19 @@ Omit `Source` (zero value) to leave source fields out of the output.
 
 ### WithAttrs and WithGroup
 
-The handler implements `slog.Handler` fully:
+The handler implements `slog.Handler` fully, matching the standard library semantics:
 
-- **`WithAttrs`** — attributes are written on every subsequent record and highlighted with the `Persistent` color from the active scheme.
-- **`WithGroup`** — record attributes are nested under the group name in the JSON output. Groups can be nested.
+- **`WithAttrs`** — attributes are written on every subsequent record and highlighted with the `Persistent` color from the active scheme. If `WithGroup` was called first, persistent attributes are nested inside that group.
+- **`WithGroup`** — record attributes are nested under the group name in the JSON output. Groups can be nested. Calling `WithAttrs` before `WithGroup` keeps those attributes at the top level.
 
 ```go
 logger := slog.New(handler).With("service", "api").WithGroup("http")
 logger.Info("request", "method", "GET", "status", 200)
 // {"time":"12:34:56","level":"INFO","msg":"request","service":"api","http":{"method":"GET","status":200}}
+
+httpLogger := slog.New(handler).WithGroup("http").With("method", "GET")
+httpLogger.Info("request", "status", 200)
+// {"time":"12:34:56","level":"INFO","msg":"request","http":{"method":"GET","status":200}}
 ```
 
 ## Color Schemes

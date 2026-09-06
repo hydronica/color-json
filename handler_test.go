@@ -2,6 +2,7 @@ package colorjson
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -165,6 +166,34 @@ func TestColoredJSON(t *testing.T) {
 			},
 			Expected: `{"time":"2024-05-28","level":"INFO","msg":"src long file","file":"` + lFile + ":" + line + `"}` + "\n",
 		},
+		"escaped message": {
+			Input: input{
+				Opts: HandlerOptions{TimeFormat: time.RFC3339},
+				Rec: slog.NewRecord(testTime, slog.LevelInfo, `say "hi"`, 0),
+			},
+			Expected: `{"time":"2024-05-28T12:34:56Z","level":"INFO","msg":"say \"hi\""}` + "\n",
+		},
+		"custom level": {
+			Input: input{
+				Opts: HandlerOptions{TimeFormat: time.RFC3339},
+				Rec:  slog.NewRecord(testTime, slog.LevelInfo+1, "custom", 0),
+			},
+			Expected: `{"time":"2024-05-28T12:34:56Z","level":"INFO+1","msg":"custom"}` + "\n",
+		},
+		"map value": {
+			Input: input{
+				Opts: HandlerOptions{TimeFormat: time.RFC3339},
+				Rec: func() slog.Record {
+					rec := slog.NewRecord(testTime, slog.LevelError, "err", 0)
+					rec.AddAttrs(slog.Any("details", map[string]interface{}{
+						"path": "/var/log/app.log",
+						"code": 404,
+					}))
+					return rec
+				}(),
+			},
+			Expected: `{"time":"2024-05-28T12:34:56Z","level":"ERROR","msg":"err","details":{"code":404,"path":"/var/log/app.log"}}` + "\n",
+		},
 	}
 
 	trial.New(testFn, cases).Test(t)
@@ -265,4 +294,65 @@ func TestWithAttrsAndWithGroup(t *testing.T) {
 	}
 
 	trial.New(testFn, cases).Test(t)
+}
+
+func TestWithGroupThenAttrs(t *testing.T) {
+	base := NewHandler(nil, &HandlerOptions{TimeFormat: time.DateOnly})
+	testTime := time.Date(2024, 5, 28, 12, 34, 56, 0, time.UTC)
+
+	t.Run("persistent attrs in group with record attrs", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		h := base.WithGroup("http").WithAttrs([]slog.Attr{slog.String("method", "GET")})
+		handler := h.(*ColorJSONHandler)
+		handler.out = buf
+
+		rec := slog.NewRecord(testTime, slog.LevelInfo, "hello world", 0)
+		rec.AddAttrs(slog.Int("status", 200))
+		if err := handler.Handle(nil, rec); err != nil {
+			t.Fatal(err)
+		}
+
+		got := regRmColors.ReplaceAllString(buf.String(), "")
+		want := `{"time":"2024-05-28","level":"INFO","msg":"hello world","http":{"method":"GET","status":200}}` + "\n"
+		if got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+
+	t.Run("persistent attrs in group without record attrs", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		h := base.WithGroup("http").WithAttrs([]slog.Attr{slog.String("method", "GET")})
+		handler := h.(*ColorJSONHandler)
+		handler.out = buf
+
+		rec := slog.NewRecord(testTime, slog.LevelInfo, "hello world", 0)
+		if err := handler.Handle(nil, rec); err != nil {
+			t.Fatal(err)
+		}
+
+		got := regRmColors.ReplaceAllString(buf.String(), "")
+		want := `{"time":"2024-05-28","level":"INFO","msg":"hello world","http":{"method":"GET"}}` + "\n"
+		if got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
+}
+
+func TestJSONValidity(t *testing.T) {
+	buf := new(bytes.Buffer)
+	h := NewHandler(buf, &HandlerOptions{TimeFormat: time.RFC3339})
+	rec := slog.NewRecord(time.Now(), slog.LevelInfo, `say "hi"\n`, 0)
+	rec.AddAttrs(
+		slog.String("path", `C:\Users\test`),
+		slog.Any("details", map[string]interface{}{"code": 404}),
+	)
+	if err := h.Handle(nil, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	var parsed map[string]interface{}
+	out := regRmColors.ReplaceAllLiteralString(buf.String(), "")
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
 }
