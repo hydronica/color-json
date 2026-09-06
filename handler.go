@@ -177,9 +177,9 @@ func (h *ColorJSONHandler) coloredJSON(r slog.Record) string {
 	buf := &strings.Builder{}
 	buf.WriteByte('{')
 
-	h.appendAttr(buf, nil, "time", slog.StringValue(r.Time.Format(h.TimeFormat)), h.Colors.Key, h.Colors.DateTime)
+	h.appendAttr(buf, nil, slog.TimeKey, slog.TimeValue(r.Time), h.Colors.Key, h.Colors.DateTime)
 	h.writeLevel(buf, r.Level)
-	h.appendAttr(buf, nil, "msg", slog.StringValue(r.Message), h.Colors.Key, h.Colors.Message)
+	h.appendAttr(buf, nil, slog.MessageKey, slog.StringValue(r.Message), h.Colors.Key, h.Colors.Message)
 
 	if r.PC != 0 {
 		fs := runtime.CallersFrames([]uintptr{r.PC})
@@ -227,10 +227,18 @@ func (h *ColorJSONHandler) coloredJSON(r slog.Record) string {
 func (h *ColorJSONHandler) appendAttr(buf *strings.Builder, groups []string, key string, value slog.Value, keyColor, valueColor TerminalColor) {
 	attr := slog.Attr{Key: key, Value: value}
 	attr.Value = attr.Value.Resolve()
-	if h.ReplaceAttr != nil {
+	if h.ReplaceAttr != nil && attr.Value.Kind() != slog.KindGroup {
 		attr = h.ReplaceAttr(groups, attr)
 		attr.Value = attr.Value.Resolve()
 	}
+	if attr.Equal(slog.Attr{}) {
+		return
+	}
+	// Format built-in time after ReplaceAttr so callbacks see KindTime.
+	if attr.Value.Kind() == slog.KindTime {
+		attr.Value = slog.StringValue(attr.Value.Time().Format(h.TimeFormat))
+	}
+	attr = convertSpecial(attr)
 	if attr.Equal(slog.Attr{}) {
 		return
 	}
@@ -255,17 +263,17 @@ func (h *ColorJSONHandler) writeLevel(buf *strings.Builder, level slog.Level) {
 	default:
 		valueColor = h.Colors.Default
 	}
-	h.appendAttr(buf, nil, "level", slog.StringValue(level.String()), h.Colors.Key, valueColor)
+	h.appendAttr(buf, nil, slog.LevelKey, slog.AnyValue(level), h.Colors.Key, valueColor)
 }
 
 func (h *ColorJSONHandler) writeSource(buf *strings.Builder, f runtime.Frame) {
 	switch h.Source {
 	case SrcFull:
-		h.appendAttr(buf, nil, "source", slog.GroupValue(
-			slog.String("function", f.Function),
-			slog.String("file", f.File),
-			slog.Int("line", f.Line),
-		), h.Colors.Key, h.Colors.Default)
+		h.appendAttr(buf, nil, slog.SourceKey, slog.AnyValue(&slog.Source{
+			Function: f.Function,
+			File:     f.File,
+			Line:     f.Line,
+		}), h.Colors.Key, h.Colors.Default)
 	case SrcShortFile:
 		h.appendAttr(buf, nil, "file", slog.StringValue(filepath.Base(f.File)+":"+strconv.Itoa(f.Line)), h.Colors.Key, h.Colors.Default)
 	case SrcLongFile:
@@ -345,9 +353,44 @@ func (h *ColorJSONHandler) writeAttr(buf *strings.Builder, groups []string, attr
 	if attr.Equal(slog.Attr{}) {
 		return false
 	}
+	attr = convertSpecial(attr)
+	if attr.Equal(slog.Attr{}) {
+		return false
+	}
+	if attr.Value.Kind() == slog.KindGroup {
+		return h.writeAttr(buf, groups, attr, valueColor)
+	}
 
 	h.cJSON(buf, attr.Key, attr.Value, h.Colors.Key, valueColor)
 	return true
+}
+
+// convertSpecial maps slog.Level and *slog.Source to their JSON output forms
+// after ReplaceAttr, matching slog.JSONHandler.
+func convertSpecial(attr slog.Attr) slog.Attr {
+	if attr.Value.Kind() != slog.KindAny {
+		return attr
+	}
+	switch v := attr.Value.Any().(type) {
+	case slog.Level:
+		attr.Value = slog.StringValue(v.String())
+	case *slog.Source:
+		if v == nil || *v == (slog.Source{}) {
+			return slog.Attr{}
+		}
+		var as []slog.Attr
+		if v.Function != "" {
+			as = append(as, slog.String("function", v.Function))
+		}
+		if v.File != "" {
+			as = append(as, slog.String("file", v.File))
+		}
+		if v.Line != 0 {
+			as = append(as, slog.Int("line", v.Line))
+		}
+		attr.Value = slog.GroupValue(as...)
+	}
+	return attr
 }
 
 // cJSON writes a key/value pair using the handler's resolved color scheme.

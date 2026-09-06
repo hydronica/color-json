@@ -173,7 +173,7 @@ func TestColoredJSON(t *testing.T) {
 		"escaped message": {
 			Input: input{
 				Opts: HandlerOptions{TimeFormat: time.RFC3339},
-				Rec: slog.NewRecord(testTime, slog.LevelInfo, `say "hi"`, 0),
+				Rec:  slog.NewRecord(testTime, slog.LevelInfo, `say "hi"`, 0),
 			},
 			Expected: `{"time":"2024-05-28T12:34:56Z","level":"INFO","msg":"say \"hi\""}` + "\n",
 		},
@@ -440,6 +440,50 @@ func TestReplaceAttr(t *testing.T) {
 			}
 			rec = slog.NewRecord(testTime, slog.LevelInfo, "hello", 0)
 			rec.AddAttrs(slog.Group("http", slog.String("method", "GET")))
+		case "custom levels":
+			opts = HandlerOptions{
+				TimeFormat: time.RFC3339,
+				ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+					if a.Key == slog.TimeKey {
+						return slog.Attr{}
+					}
+					if a.Key == slog.LevelKey {
+						a.Key = "sev"
+						level := a.Value.Any().(slog.Level)
+						if level >= slog.LevelError {
+							a.Value = slog.StringValue("ERROR")
+						} else {
+							a.Value = slog.StringValue("INFO")
+						}
+					}
+					return a
+				},
+			}
+			rec = slog.NewRecord(testTime, slog.LevelError, "failed", 0)
+		case "time is KindTime":
+			opts = HandlerOptions{
+				TimeFormat: time.RFC3339,
+				ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+					if a.Key == slog.TimeKey {
+						return slog.String("ts", a.Value.Time().UTC().Format(time.DateOnly))
+					}
+					return a
+				},
+			}
+			rec = slog.NewRecord(testTime, slog.LevelInfo, "hello", 0)
+		case "source is *slog.Source":
+			opts = HandlerOptions{
+				TimeFormat: time.DateOnly,
+				Source:     SrcFull,
+				ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+					if a.Key == slog.SourceKey {
+						src := a.Value.Any().(*slog.Source)
+						return slog.String("src", filepath.Base(src.File)+":"+strconv.Itoa(src.Line))
+					}
+					return a
+				},
+			}
+			rec = slog.NewRecord(testTime, slog.LevelInfo, "hello", pc)
 		default:
 			return result{}, fmt.Errorf("unknown variant %q", in.variant)
 		}
@@ -461,6 +505,24 @@ func TestReplaceAttr(t *testing.T) {
 			Expected: result{
 				Output: `{"time":"2024-05-28","level":"INFO","msg":"hello","http":{"method":"GET"}}` + "\n",
 				Keys:   []string{"time", "level", "msg", "method"},
+			},
+		},
+		"custom levels": {
+			Input: input{variant: "custom levels"},
+			Expected: result{
+				Output: `{"sev":"ERROR","msg":"failed"}` + "\n",
+			},
+		},
+		"time is KindTime": {
+			Input: input{variant: "time is KindTime"},
+			Expected: result{
+				Output: `{"ts":"2024-05-28","level":"INFO","msg":"hello"}` + "\n",
+			},
+		},
+		"source is *slog.Source": {
+			Input: input{variant: "source is *slog.Source"},
+			Expected: result{
+				Output: `{"time":"2024-05-28","level":"INFO","msg":"hello","src":"` + sFile + ":" + line + `"}` + "\n",
 			},
 		},
 	}
