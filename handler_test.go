@@ -3,14 +3,18 @@ package colorjson
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,8 +42,8 @@ func TestOutput(t *testing.T) {
 	// Visual sample: iterate presets, one short line per level, attrs split by level.
 	testTime := time.Date(2024, 5, 28, 12, 34, 56, 0, time.UTC)
 	base := HandlerOptions{TimeFormat: time.TimeOnly}
-	names := []string{"Default", "Colorful", "No Color"}
-	profiles := []Colors{ColorDefault, Colorful, NoColor}
+	names := []string{"Standard", "Colorful", "No Color"}
+	profiles := []Colors{ColorStandard, Colorful, Colors{}}
 
 	write := func(colors Colors, opts HandlerOptions, persistent []slog.Attr, rec slog.Record) {
 		buf := new(bytes.Buffer)
@@ -194,6 +198,17 @@ func TestColoredJSON(t *testing.T) {
 			},
 			Expected: `{"time":"2024-05-28T12:34:56Z","level":"ERROR","msg":"err","details":{"code":404,"path":"/var/log/app.log"}}` + "\n",
 		},
+		"error any value": {
+			Input: input{
+				Opts: HandlerOptions{TimeFormat: time.RFC3339},
+				Rec: func() slog.Record {
+					rec := slog.NewRecord(testTime, slog.LevelError, "failed", 0)
+					rec.AddAttrs(slog.Any("err", errors.New("connection refused")))
+					return rec
+				}(),
+			},
+			Expected: `{"time":"2024-05-28T12:34:56Z","level":"ERROR","msg":"failed","err":"connection refused"}` + "\n",
+		},
 	}
 
 	trial.New(testFn, cases).Test(t)
@@ -244,52 +259,75 @@ func TestEnabled(t *testing.T) {
 func TestWithAttrsAndWithGroup(t *testing.T) {
 	baseHandler := NewHandler(nil, &HandlerOptions{TimeFormat: time.DateOnly})
 
-	testFn := func(in slog.Handler) (string, error) {
+	type input struct {
+		Handler       slog.Handler
+		Msg           string
+		NoRecordAttrs bool
+	}
+
+	testFn := func(in input) (string, error) {
 		buf := new(bytes.Buffer)
-		handler := in.(*ColorJSONHandler)
+		handler := in.Handler.(*ColorJSONHandler)
 		handler.out = buf
 
-		// Create a record with attributes that should go into groups
 		testTime := time.Date(2024, 5, 28, 12, 34, 56, 0, time.UTC)
 		pc, _, _, _ := runtime.Caller(0)
-		rec := slog.NewRecord(testTime, slog.LevelInfo, "hello world", pc)
+		msg := in.Msg
+		if msg == "" {
+			msg = "hello world"
+		}
+		rec := slog.NewRecord(testTime, slog.LevelInfo, msg, pc)
+		if !in.NoRecordAttrs {
+			rec.AddAttrs(
+				slog.String("method", "POST"),
+				slog.Int("status", 200),
+			)
+		}
 
-		// Add attributes that will be placed in the current group context
-		rec.AddAttrs(
-			slog.String("method", "POST"),
-			slog.Int("status", 200),
-		)
-
-		// Handle the record
 		if err := handler.Handle(nil, rec); err != nil {
 			return "", err
 		}
 
-		// Remove colors for easier testing
 		return regRmColors.ReplaceAllString(buf.String(), ""), nil
 	}
 
-	cases := trial.Cases[slog.Handler, string]{
+	cases := trial.Cases[input, string]{
 		"with attrs": {
-			Input: baseHandler.WithAttrs([]slog.Attr{
-				slog.String("user_id", "123"),
-				slog.String("session", "abc-def"),
-			}),
+			Input: input{
+				Handler: baseHandler.WithAttrs([]slog.Attr{
+					slog.String("user_id", "123"),
+					slog.String("session", "abc-def"),
+				}),
+			},
 			Expected: `{"time":"2024-05-28","level":"INFO","msg":"hello world","user_id":"123","session":"abc-def","method":"POST","status":200}` + "\n",
 		},
 		"with group": {
-			Input:    baseHandler.WithGroup("http"),
+			Input:    input{Handler: baseHandler.WithGroup("http")},
 			Expected: `{"time":"2024-05-28","level":"INFO","msg":"hello world","http":{"method":"POST","status":200}}` + "\n",
 		},
 		"with attrs and group": {
-			Input: baseHandler.WithAttrs([]slog.Attr{
-				slog.String("trace_id", "xyz789"),
-			}).WithGroup("request"),
+			Input: input{
+				Handler: baseHandler.WithAttrs([]slog.Attr{
+					slog.String("trace_id", "xyz789"),
+				}).WithGroup("request"),
+			},
 			Expected: `{"time":"2024-05-28","level":"INFO","msg":"hello world","trace_id":"xyz789","request":{"method":"POST","status":200}}` + "\n",
 		},
 		"nested groups": {
-			Input:    baseHandler.WithGroup("service").WithGroup("database").(*ColorJSONHandler),
+			Input:    input{Handler: baseHandler.WithGroup("service").WithGroup("database").(*ColorJSONHandler)},
 			Expected: `{"time":"2024-05-28","level":"INFO","msg":"hello world","service":{"database":{"method":"POST","status":200}}}` + "\n",
+		},
+		"attrs then group then attrs": {
+			Input: input{
+				Handler: baseHandler.WithAttrs([]slog.Attr{
+					slog.String("service", "api"),
+				}).WithGroup("http").WithAttrs([]slog.Attr{
+					slog.String("method", "GET"),
+				}),
+				Msg:           "request",
+				NoRecordAttrs: true,
+			},
+			Expected: `{"time":"2024-05-28","level":"INFO","msg":"request","service":"api","http":{"method":"GET"}}` + "\n",
 		},
 	}
 
@@ -345,6 +383,9 @@ func TestJSONValidity(t *testing.T) {
 	rec.AddAttrs(
 		slog.String("path", `C:\Users\test`),
 		slog.Any("details", map[string]interface{}{"code": 404}),
+		slog.Float64("nan", math.NaN()),
+		slog.Float64("inf", math.Inf(1)),
+		slog.Float64("neg_inf", math.Inf(-1)),
 	)
 	if err := h.Handle(nil, rec); err != nil {
 		t.Fatal(err)
@@ -354,5 +395,108 @@ func TestJSONValidity(t *testing.T) {
 	out := regRmColors.ReplaceAllLiteralString(buf.String(), "")
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+}
+
+func TestReplaceAttr(t *testing.T) {
+	testTime := time.Date(2024, 5, 28, 12, 34, 56, 0, time.UTC)
+
+	type input struct {
+		variant string
+	}
+
+	type result struct {
+		Output string
+		Keys   []string
+	}
+
+	testFn := func(in input) (result, error) {
+		var keys []string
+		var opts HandlerOptions
+		var rec slog.Record
+
+		switch in.variant {
+		case "builtins":
+			opts = HandlerOptions{
+				TimeFormat: time.RFC3339,
+				ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+					switch a.Key {
+					case "time":
+						return slog.Attr{}
+					case "msg":
+						return slog.String("message", a.Value.String())
+					}
+					return a
+				},
+			}
+			rec = slog.NewRecord(testTime, slog.LevelInfo, "hello", 0)
+		case "skips group attrs":
+			opts = HandlerOptions{
+				TimeFormat: time.DateOnly,
+				ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+					keys = append(keys, a.Key)
+					return a
+				},
+			}
+			rec = slog.NewRecord(testTime, slog.LevelInfo, "hello", 0)
+			rec.AddAttrs(slog.Group("http", slog.String("method", "GET")))
+		default:
+			return result{}, fmt.Errorf("unknown variant %q", in.variant)
+		}
+
+		h := NewHandler(io.Discard, &opts)
+		out := regRmColors.ReplaceAllString(h.coloredJSON(rec), "")
+		return result{Output: out, Keys: keys}, nil
+	}
+
+	cases := trial.Cases[input, result]{
+		"builtins": {
+			Input: input{variant: "builtins"},
+			Expected: result{
+				Output: `{"level":"INFO","message":"hello"}` + "\n",
+			},
+		},
+		"skips group attrs": {
+			Input: input{variant: "skips group attrs"},
+			Expected: result{
+				Output: `{"time":"2024-05-28","level":"INFO","msg":"hello","http":{"method":"GET"}}` + "\n",
+				Keys:   []string{"time", "level", "msg", "method"},
+			},
+		},
+	}
+
+	trial.New(testFn, cases).Test(t)
+}
+
+func TestHandleConcurrent(t *testing.T) {
+	buf := new(bytes.Buffer)
+	h := NewHandler(buf, &HandlerOptions{TimeFormat: time.DateOnly})
+	rec := slog.NewRecord(time.Date(2024, 5, 28, 12, 34, 56, 0, time.UTC), slog.LevelInfo, "hello", 0)
+
+	const goroutines = 32
+	const logsPerGoroutine = 50
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < logsPerGoroutine; j++ {
+				if err := h.Handle(nil, rec); err != nil {
+					t.Errorf("Handle: %v", err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	lines := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
+	if len(lines) != goroutines*logsPerGoroutine {
+		t.Fatalf("got %d lines, want %d", len(lines), goroutines*logsPerGoroutine)
+	}
+	for _, line := range lines {
+		out := regRmColors.ReplaceAllLiteralString(line, "")
+		if !strings.HasPrefix(out, `{"time":"2024-05-28","level":"INFO","msg":"hello"}`) {
+			t.Fatalf("unexpected line: %q", line)
+		}
 	}
 }

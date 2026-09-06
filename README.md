@@ -33,6 +33,7 @@ func main() {
 	handler := colorjson.NewHandler(os.Stderr, &colorjson.HandlerOptions{
 		Level:  slog.LevelDebug,
 		Source: colorjson.SrcShortFile,
+		Colors: colorjson.ColorStandard,
 	})
 
 	logger := slog.New(handler)
@@ -55,9 +56,16 @@ func main() {
 | `Source` | How to include caller source in each record. See [Source formats](#source-formats). |
 | `ReplaceAttr` | Rewrites each non-group attribute before it is logged. Same contract as [`slog.HandlerOptions.ReplaceAttr`](https://pkg.go.dev/log/slog#HandlerOptions). |
 | `TimeFormat` | `time.Format` layout for the `time` field. Defaults to `time.TimeOnly` (`"15:04:05"`). Use `time.RFC3339` or `time.DateOnly` for other layouts. |
-| `Colors` | Color preset or custom scheme. Defaults to `ColorDefault`. See [Color Schemes](#color-schemes). |
+| `Colors` | Color preset or custom scheme. The zero value disables ANSI colors. See [Color Schemes](#color-schemes). |
 
-Pass `nil` for options to use defaults (`ColorDefault`, `time.TimeOnly`, level `INFO`).
+Pass `nil` for options to use defaults (`time.TimeOnly`, level `INFO`, no ANSI colors).
+
+### Differences from `slog.JSONHandler`
+
+- `HandlerOptions` is a package-specific struct, not `slog.HandlerOptions`.
+- ANSI color constants are unexported; use the `ColorStandard` and `Colorful` presets or custom `Colors` values.
+- Default `TimeFormat` is `time.TimeOnly`, not RFC3339.
+- `time.Duration` values are serialized as human-readable strings (for example `"1s"`), not nanosecond integers. See [issues.md](issues.md) for a proposed nanosecond option.
 
 ### Source formats
 
@@ -90,11 +98,11 @@ httpLogger.Info("request", "status", 200)
 
 ## Color Schemes
 
-Three built-in presets are available via `HandlerOptions.Colors`:
+Two built-in presets are available via `HandlerOptions.Colors`. The zero value of `Colors` produces plain JSON with no ANSI escape codes.
 
 ```go
 handler := colorjson.NewHandler(os.Stderr, &colorjson.HandlerOptions{
-	Colors: colorjson.ColorDefault, // or Colorful, NoColor
+	Colors: colorjson.ColorStandard, // or Colorful, or Colors{} for no color
 })
 ```
 
@@ -108,7 +116,7 @@ To see live colors in your terminal:
 env -u NO_COLOR FORCE_COLOR=1 go test -run TestOutput -v
 ```
 
-### ColorDefault
+### ColorStandard
 
 Gray keys and values, orange time and message, yellow warnings, red errors.
 
@@ -116,18 +124,14 @@ Gray keys and values, orange time and message, yellow warnings, red errors.
 
 Teal keys, purple time, red message, yellow warnings, red errors.
 
-### NoColor
-
-Plain JSON with no ANSI escape codes — useful for file output or when `NO_COLOR` is set.
-
-Persistent attributes from `WithAttrs` use bright white in both `ColorDefault` and `Colorful`.
+Persistent attributes from `WithAttrs` use bright white in both `ColorStandard` and `Colorful`.
 
 ### Custom colors
 
 Start from a preset and override individual fields on the `Colors` struct. Each field is a `TerminalColor` (an ANSI escape sequence string):
 
 ```go
-colors := colorjson.ColorDefault
+colors := colorjson.ColorStandard
 colors.LevelError = colorjson.TerminalColor("\033[41m\033[37m") // white on red background
 
 handler := colorjson.NewHandler(os.Stderr, &colorjson.HandlerOptions{
@@ -141,7 +145,7 @@ Available `Colors` fields: `Key`, `Default`, `Message`, `DateTime`, `Persistent`
 
 The handler automatically detects whether the terminal supports color. Colors are disabled when:
 
-- `NO_COLOR` is set (see [no-color.org](https://no-color.org/))
+- `NO_COLOR` is set to a non-empty value (see [no-color.org](https://no-color.org/))
 - `TERM` is empty or set to `dumb`
 
 Set `FORCE_COLOR` to enable colors even when the terminal would otherwise be treated as non-color.

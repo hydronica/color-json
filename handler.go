@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -67,6 +68,7 @@ type Colors struct {
 type ColorJSONHandler struct {
 	HandlerOptions
 
+	mu                *sync.Mutex
 	out               io.Writer
 	attrs             []slog.Attr // persistent attributes from WithAttrs
 	groups            []string    // group hierarchy from WithGroup
@@ -91,27 +93,26 @@ type HandlerOptions struct {
 	// If empty, time.TimeOnly will be used
 	TimeFormat string
 
-	// Colors defines preset color schemes
+	// Colors defines preset color schemes. The zero value disables ANSI colors.
 	Colors Colors
 }
 
 // NewHandler creates a new handler for colorized JSON output
 func NewHandler(w io.Writer, opts *HandlerOptions) *ColorJSONHandler {
 	if opts == nil {
-		opts = &HandlerOptions{
-			Colors: ColorDefault,
-		}
+		opts = &HandlerOptions{}
 	}
 	if opts.TimeFormat == "" {
 		opts.TimeFormat = time.TimeOnly
 	}
 
 	h := &ColorJSONHandler{
+		mu:             &sync.Mutex{},
 		out:            w,
 		HandlerOptions: *opts,
 	}
 	if !colorEnabled {
-		h.Colors = NoColor
+		h.Colors = Colors{}
 	}
 	return h
 }
@@ -128,7 +129,9 @@ func (h *ColorJSONHandler) Enabled(ctx context.Context, level slog.Level) bool {
 func (h *ColorJSONHandler) Handle(ctx context.Context, r slog.Record) error {
 	colorized := h.coloredJSON(r)
 
+	h.mu.Lock()
 	_, err := fmt.Fprint(h.out, colorized)
+	h.mu.Unlock()
 	return err
 }
 
@@ -137,16 +140,19 @@ func (h *ColorJSONHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(attrs) == 0 {
 		return h
 	}
-	groups := append([]string(nil), h.groups...)
-	newAttrs := append(append([]slog.Attr(nil), h.attrs...), attrs...)
-	preformatted, nOpenGroups := buildPreformatted(h, groups, newAttrs)
+	newFragment, groupsOpened := buildPreformatted(h, h.groups[h.nOpenGroups:], attrs)
+	nOpenGroups := h.nOpenGroups
+	if newFragment != "" && groupsOpened > 0 {
+		nOpenGroups = h.nOpenGroups + groupsOpened
+	}
 
 	return &ColorJSONHandler{
+		mu:                h.mu,
 		out:               h.out,
 		HandlerOptions:    h.HandlerOptions,
-		attrs:             newAttrs,
-		groups:            groups,
-		preformattedAttrs: preformatted,
+		attrs:             append(append([]slog.Attr(nil), h.attrs...), attrs...),
+		groups:            append([]string(nil), h.groups...),
+		preformattedAttrs: h.preformattedAttrs + newFragment,
 		nOpenGroups:       nOpenGroups,
 	}
 }
@@ -157,6 +163,7 @@ func (h *ColorJSONHandler) WithGroup(name string) slog.Handler {
 		return h
 	}
 	return &ColorJSONHandler{
+		mu:                h.mu,
 		out:               h.out,
 		HandlerOptions:    h.HandlerOptions,
 		attrs:             append([]slog.Attr(nil), h.attrs...),
@@ -170,9 +177,9 @@ func (h *ColorJSONHandler) coloredJSON(r slog.Record) string {
 	buf := &strings.Builder{}
 	buf.WriteByte('{')
 
-	h.cJSON(buf, "time", slog.StringValue(r.Time.Format(h.TimeFormat)), h.Colors.Key, h.Colors.DateTime)
+	h.appendAttr(buf, nil, "time", slog.StringValue(r.Time.Format(h.TimeFormat)), h.Colors.Key, h.Colors.DateTime)
 	h.writeLevel(buf, r.Level)
-	h.cJSON(buf, "msg", slog.StringValue(r.Message), h.Colors.Key, h.Colors.Message)
+	h.appendAttr(buf, nil, "msg", slog.StringValue(r.Message), h.Colors.Key, h.Colors.Message)
 
 	if r.PC != 0 {
 		fs := runtime.CallersFrames([]uintptr{r.PC})
@@ -217,6 +224,23 @@ func (h *ColorJSONHandler) coloredJSON(r slog.Record) string {
 	return buf.String()
 }
 
+func (h *ColorJSONHandler) appendAttr(buf *strings.Builder, groups []string, key string, value slog.Value, keyColor, valueColor TerminalColor) {
+	attr := slog.Attr{Key: key, Value: value}
+	attr.Value = attr.Value.Resolve()
+	if h.ReplaceAttr != nil {
+		attr = h.ReplaceAttr(groups, attr)
+		attr.Value = attr.Value.Resolve()
+	}
+	if attr.Equal(slog.Attr{}) {
+		return
+	}
+	if attr.Value.Kind() == slog.KindGroup {
+		h.writeAttr(buf, groups, attr, valueColor)
+		return
+	}
+	h.cJSON(buf, attr.Key, attr.Value, keyColor, valueColor)
+}
+
 func (h *ColorJSONHandler) writeLevel(buf *strings.Builder, level slog.Level) {
 	var valueColor TerminalColor
 	switch level {
@@ -231,23 +255,21 @@ func (h *ColorJSONHandler) writeLevel(buf *strings.Builder, level slog.Level) {
 	default:
 		valueColor = h.Colors.Default
 	}
-	h.cJSON(buf, "level", slog.StringValue(level.String()), h.Colors.Key, valueColor)
+	h.appendAttr(buf, nil, "level", slog.StringValue(level.String()), h.Colors.Key, valueColor)
 }
 
 func (h *ColorJSONHandler) writeSource(buf *strings.Builder, f runtime.Frame) {
 	switch h.Source {
 	case SrcFull:
-		h.openGroup(buf, "source")
-		h.cJSON(buf, "function", slog.StringValue(f.Function), h.Colors.Key, h.Colors.Default)
-		h.cJSON(buf, "file", slog.StringValue(f.File), h.Colors.Key, h.Colors.Default)
-		h.cJSON(buf, "line", slog.IntValue(f.Line), h.Colors.Key, h.Colors.Default)
-		trimTrailingComma(buf)
-		buf.WriteByte('}')
-		buf.WriteByte(',')
+		h.appendAttr(buf, nil, "source", slog.GroupValue(
+			slog.String("function", f.Function),
+			slog.String("file", f.File),
+			slog.Int("line", f.Line),
+		), h.Colors.Key, h.Colors.Default)
 	case SrcShortFile:
-		h.cJSON(buf, "file", slog.StringValue(filepath.Base(f.File)+":"+strconv.Itoa(f.Line)), h.Colors.Key, h.Colors.Default)
+		h.appendAttr(buf, nil, "file", slog.StringValue(filepath.Base(f.File)+":"+strconv.Itoa(f.Line)), h.Colors.Key, h.Colors.Default)
 	case SrcLongFile:
-		h.cJSON(buf, "file", slog.StringValue(f.File+":"+strconv.Itoa(f.Line)), h.Colors.Key, h.Colors.Default)
+		h.appendAttr(buf, nil, "file", slog.StringValue(f.File+":"+strconv.Itoa(f.Line)), h.Colors.Key, h.Colors.Default)
 	}
 }
 
@@ -263,7 +285,7 @@ func buildPreformatted(h *ColorJSONHandler, groups []string, attrs []slog.Attr) 
 
 	wrote := false
 	for _, attr := range attrs {
-		if h.writeAttr(buf, groups, attr, h.Colors.Persistent) {
+		if h.writeAttr(buf, h.groups[:h.nOpenGroups+len(groups)], attr, h.Colors.Persistent) {
 			wrote = true
 		}
 	}
@@ -281,13 +303,6 @@ func (h *ColorJSONHandler) openGroup(buf *strings.Builder, name string) {
 
 func (h *ColorJSONHandler) writeAttr(buf *strings.Builder, groups []string, attr slog.Attr, valueColor TerminalColor) bool {
 	attr.Value = attr.Value.Resolve()
-	if h.ReplaceAttr != nil {
-		attr = h.ReplaceAttr(groups, attr)
-	}
-	if attr.Equal(slog.Attr{}) {
-		return false
-	}
-
 	if attr.Value.Kind() == slog.KindGroup {
 		members := attr.Value.Group()
 		if attr.Key == "" {
@@ -299,13 +314,23 @@ func (h *ColorJSONHandler) writeAttr(buf *strings.Builder, groups []string, attr
 			}
 			return wrote
 		}
-		if !groupHasAttrs(h, groups, members) {
+		if len(members) == 0 {
 			return false
 		}
-		childGroups := append(groups, attr.Key)
+		pos := buf.Len()
 		h.openGroup(buf, attr.Key)
+		childGroups := append(groups, attr.Key)
+		wrote := false
 		for _, member := range members {
-			h.writeAttr(buf, childGroups, member, valueColor)
+			if h.writeAttr(buf, childGroups, member, valueColor) {
+				wrote = true
+			}
+		}
+		if !wrote {
+			content := buf.String()
+			buf.Reset()
+			buf.WriteString(content[:pos])
+			return false
 		}
 		trimTrailingComma(buf)
 		buf.WriteByte('}')
@@ -313,32 +338,16 @@ func (h *ColorJSONHandler) writeAttr(buf *strings.Builder, groups []string, attr
 		return true
 	}
 
+	if h.ReplaceAttr != nil {
+		attr = h.ReplaceAttr(groups, attr)
+		attr.Value = attr.Value.Resolve()
+	}
+	if attr.Equal(slog.Attr{}) {
+		return false
+	}
+
 	h.cJSON(buf, attr.Key, attr.Value, h.Colors.Key, valueColor)
 	return true
-}
-
-func groupHasAttrs(h *ColorJSONHandler, groups []string, attrs []slog.Attr) bool {
-	for _, attr := range attrs {
-		attr.Value = attr.Value.Resolve()
-		if h.ReplaceAttr != nil {
-			attr = h.ReplaceAttr(groups, attr)
-		}
-		if attr.Equal(slog.Attr{}) {
-			continue
-		}
-		if attr.Value.Kind() == slog.KindGroup {
-			childGroups := groups
-			if attr.Key != "" {
-				childGroups = append(groups, attr.Key)
-			}
-			if groupHasAttrs(h, childGroups, attr.Value.Group()) {
-				return true
-			}
-			continue
-		}
-		return true
-	}
-	return false
 }
 
 // cJSON writes a key/value pair using the handler's resolved color scheme.
@@ -359,7 +368,12 @@ func (h *ColorJSONHandler) appendValue(buf *strings.Builder, value slog.Value, c
 	case slog.KindUint64:
 		paint(buf, color, strconv.FormatUint(value.Uint64(), 10))
 	case slog.KindFloat64:
-		paint(buf, color, strconv.FormatFloat(value.Float64(), 'f', -1, 64))
+		b, err := json.Marshal(value.Float64())
+		if err != nil {
+			paint(buf, color, fmt.Sprintf(`"!ERROR:%v"`, err))
+		} else {
+			paint(buf, color, string(b))
+		}
 	case slog.KindBool:
 		paint(buf, color, strconv.FormatBool(value.Bool()))
 	case slog.KindDuration:
@@ -386,6 +400,10 @@ func appendJSONAny(buf *strings.Builder, v any, color TerminalColor) {
 		paint(buf, color, "null")
 		return
 	}
+	if err, ok := v.(error); ok {
+		paint(buf, color, jsonString(err.Error()))
+		return
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		paint(buf, color, "null")
@@ -406,7 +424,7 @@ func trimTrailingComma(buf *strings.Builder) {
 }
 
 var (
-	ColorDefault = Colors{
+	ColorStandard = Colors{
 		Key:        grayColor,
 		Default:    grayColor,
 		Persistent: bWhiteColor,
@@ -427,7 +445,6 @@ var (
 		LevelWarn:  bYellowColor,
 		LevelError: bRedColor,
 	}
-	NoColor = Colors{}
 )
 
 type SrcFormat int

@@ -11,7 +11,7 @@ var colorEnabled = useColor()
 // useColor reports whether ANSI colors should be applied to terminal output.
 // It respects the NO_COLOR and FORCE_COLOR conventions and checks TERM.
 func useColor() bool {
-	if _, noColor := os.LookupEnv("NO_COLOR"); noColor {
+	if val, ok := os.LookupEnv("NO_COLOR"); ok && val != "" {
 		return false
 	}
 	if _, forceColor := os.LookupEnv("FORCE_COLOR"); forceColor {

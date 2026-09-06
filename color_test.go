@@ -15,6 +15,7 @@ func TestUseColor(t *testing.T) {
 		want bool
 	}{
 		"no color set":         {env: map[string]string{"NO_COLOR": "1", "TERM": "xterm-256color"}, want: false},
+		"empty no color":         {env: map[string]string{"NO_COLOR": "", "TERM": "xterm-256color"}, want: true},
 		"force color set":      {env: map[string]string{"FORCE_COLOR": "1", "TERM": "dumb"}, want: true},
 		"no color beats force": {env: map[string]string{"NO_COLOR": "1", "FORCE_COLOR": "1", "TERM": "xterm-256color"}, want: false},
 		"empty term":           {env: map[string]string{"TERM": ""}, want: false},
@@ -48,7 +49,7 @@ func TestApplyColorDisabled(t *testing.T) {
 	buf := new(bytes.Buffer)
 	h := NewHandler(buf, &HandlerOptions{
 		TimeFormat: time.RFC3339,
-		Colors:     ColorDefault,
+		Colors:     ColorStandard,
 	})
 	rec := slog.NewRecord(time.Date(2024, 5, 28, 12, 34, 56, 0, time.UTC), slog.LevelInfo, "hello", 0)
 	rec.AddAttrs(slog.String("foo", "bar"))
@@ -72,20 +73,25 @@ func TestNewHandlerResolvesColors(t *testing.T) {
 	t.Cleanup(func() { colorEnabled = old })
 
 	colorEnabled = false
-	h := NewHandler(nil, &HandlerOptions{Colors: ColorDefault})
-	if h.Colors != NoColor {
-		t.Fatalf("Colors = %#v, want NoColor", h.Colors)
+	h := NewHandler(nil, &HandlerOptions{Colors: ColorStandard})
+	if h.Colors != (Colors{}) {
+		t.Fatalf("Colors = %#v, want zero Colors when color is disabled", h.Colors)
 	}
 
 	colorEnabled = true
-	h = NewHandler(nil, &HandlerOptions{Colors: ColorDefault})
-	if h.Colors != ColorDefault {
-		t.Fatalf("Colors = %#v, want ColorDefault", h.Colors)
+	h = NewHandler(nil, &HandlerOptions{Colors: ColorStandard})
+	if h.Colors != ColorStandard {
+		t.Fatalf("Colors = %#v, want ColorStandard", h.Colors)
 	}
 
-	h = NewHandler(nil, &HandlerOptions{Colors: NoColor})
-	if h.Colors != NoColor {
-		t.Fatalf("explicit NoColor should be preserved")
+	h = NewHandler(nil, &HandlerOptions{Colors: Colors{}})
+	if h.Colors != (Colors{}) {
+		t.Fatalf("explicit zero Colors should be preserved")
+	}
+
+	h = NewHandler(nil, nil)
+	if h.Colors != (Colors{}) {
+		t.Fatalf("nil opts should default to zero Colors, got %#v", h.Colors)
 	}
 }
 

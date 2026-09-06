@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	colors := colorjson.ColorDefault
+	colors := colorjson.ColorStandard
 	colors.LevelError = colorjson.TerminalColor("\033[41m\033[37m") // white on red background
 
 	handler := colorjson.NewHandler(os.Stderr, &colorjson.HandlerOptions{
