@@ -5,8 +5,10 @@ A Go package that provides a colorized JSON handler for the Go standard library'
 ## Features
 
 - Pretty-prints JSON logs with syntax highlighting
-- Color-coded log levels (INFO=green, DEBUG=cyan, WARN=yellow, ERROR=red)
-- Properly formats and colorizes strings, numbers, booleans, and null values
+- Color-coded log levels, keys, timestamps, and messages (see [Color Schemes](#color-schemes))
+- Formats strings, numbers, booleans, and null values as JSON
+- Supports `WithAttrs` and `WithGroup` like the standard `slog` handlers
+- Respects `NO_COLOR`, `FORCE_COLOR`, and `TERM` for terminal color detection
 - Implements the `slog.Handler` interface for seamless integration
 
 ## Installation
@@ -24,61 +26,112 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/hydronica/color-json"
+	colorjson "github.com/hydronica/color-json"
 )
 
 func main() {
-	// Create a new colorized JSON handler
-	handler := colorjson.NewHandler(os.Stderr, 
-	&slog.HandlerOptions{
-		Level: slog.LevelDebug, // Set minimum level
-		Source: slog.SrcShortFile, 
+	handler := colorjson.NewHandler(os.Stderr, &colorjson.HandlerOptions{
+		Level:  slog.LevelDebug,
+		Source: colorjson.SrcShortFile,
 	})
 
-	// Create a logger with the handler
 	logger := slog.New(handler)
-
-	// Set as the default logger
 	slog.SetDefault(logger)
 
-	// Example log messages
 	slog.Info("Server started", "addr", ":8080")
 	slog.Debug("Detailed debug message", "value", 123)
-	slog.Debug(`Testing null & escaped quotes: "`, "value", nil)
 	slog.Warn("Something might be wrong", "error", "connection timeout")
-	slog.Error("Critical error occurred", "error", "file not found", "details", map[string]interface{}{
-		"path":        "/var/log/app.log",
-		"code":        404,
-		"permissions": false,
-	})
+	slog.Error("Critical error occurred", "error", "file not found")
 }
 ```
 
 ## Configuration
 
-The `NewHandler` function accepts the same parameters as the standard `slog.NewJSONHandler`:
+`NewHandler` takes an `io.Writer` and an optional `*colorjson.HandlerOptions`:
 
-- `w io.Writer` - The output destination (typically `os.Stderr`)
-- `opts *slog.HandlerOptions` - Handler options including:
-  - `Level` - The minimum log level to output
-  - `AddSource` - Whether to add source code information
-  - `ReplaceAttr` - A function to customize log attribute handling
+| Field | Description |
+|-------|-------------|
+| `Level` | Minimum log level. Defaults to `slog.LevelInfo` when unset. |
+| `Source` | How to include caller source in each record. See [Source formats](#source-formats). |
+| `ReplaceAttr` | Rewrites each non-group attribute before it is logged. Same contract as [`slog.HandlerOptions.ReplaceAttr`](https://pkg.go.dev/log/slog#HandlerOptions). |
+| `TimeFormat` | `time.Format` layout for the `time` field. Defaults to `time.TimeOnly` (`"15:04:05"`). Use `time.RFC3339` or `time.DateOnly` for other layouts. |
+| `Colors` | Color preset or custom scheme. Defaults to `ColorDefault`. See [Color Schemes](#color-schemes). |
 
-## Output
+Pass `nil` for options to use defaults (`ColorDefault`, `time.TimeOnly`, level `INFO`).
 
-The output will be colorized JSON with:
+### Source formats
 
-- JSON keys in cyan
-- Strings in green
-- Numbers in yellow
-- Booleans in magenta
-- Null values in bright white
-- Braces/brackets in bright blue
-- Log levels colored according to severity:
-  - INFO: green
-  - DEBUG: bright cyan
-  - WARN: yellow
-  - ERROR: red
+Set `Source` to include caller information in each log line:
+
+| Constant | Output shape |
+|----------|--------------|
+| `SrcFull` | `{"source":{"function":"pkg.Func","file":"/path/file.go","line":42}}` |
+| `SrcShortFile` | `{"file":"file.go:42"}` — like `log.Lshortfile` |
+| `SrcLongFile` | `{"file":"/path/file.go:42"}` — like `log.Llongfile` |
+
+Omit `Source` (zero value) to leave source fields out of the output.
+
+### WithAttrs and WithGroup
+
+The handler implements `slog.Handler` fully:
+
+- **`WithAttrs`** — attributes are written on every subsequent record and highlighted with the `Persistent` color from the active scheme.
+- **`WithGroup`** — record attributes are nested under the group name in the JSON output. Groups can be nested.
+
+```go
+logger := slog.New(handler).With("service", "api").WithGroup("http")
+logger.Info("request", "method", "GET", "status", 200)
+// {"time":"12:34:56","level":"INFO","msg":"request","service":"api","http":{"method":"GET","status":200}}
+```
+
+## Color Schemes
+
+Three built-in presets are available via `HandlerOptions.Colors`:
+
+```go
+handler := colorjson.NewHandler(os.Stderr, &colorjson.HandlerOptions{
+	Colors: colorjson.ColorDefault, // or Colorful, NoColor
+})
+```
+
+The screenshot below shows the same sample lines for each preset (from `go test -run TestOutput`):
+
+![Color scheme previews](color-json.png)
+
+To see live colors in your terminal:
+
+```bash
+env -u NO_COLOR FORCE_COLOR=1 go test -run TestOutput -v
+```
+
+### ColorDefault
+
+Gray keys and values, orange time and message, yellow warnings, red errors.
+
+### Colorful
+
+Teal keys, purple time, red message, yellow warnings, red errors.
+
+### NoColor
+
+Plain JSON with no ANSI escape codes — useful for file output or when `NO_COLOR` is set.
+
+Persistent attributes from `WithAttrs` use bright white in both `ColorDefault` and `Colorful`.
+
+### Custom colors
+
+Start from a preset and override individual fields on the `Colors` struct. Each field is a `TerminalColor` (an ANSI escape sequence string):
+
+```go
+colors := colorjson.ColorDefault
+colors.LevelError = colorjson.TerminalColor("\033[41m\033[37m") // white on red background
+
+handler := colorjson.NewHandler(os.Stderr, &colorjson.HandlerOptions{
+	Colors: colors,
+})
+```
+
+Available `Colors` fields: `Key`, `Default`, `Message`, `DateTime`, `Persistent`, `LevelInfo`, `LevelDebug`, `LevelWarn`, `LevelError`.
 
 ## Terminal Support
 

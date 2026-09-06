@@ -34,47 +34,46 @@ func TestMain(t *testing.M) {
 }
 
 func TestOutput(t *testing.T) {
-	levels := []struct {
-		level    slog.Level
-		levelStr string
-	}{
-		{slog.LevelInfo, "INFO"},
-		{slog.LevelDebug, "DEBUG"},
-		{slog.LevelWarn, "WARN"},
-		{slog.LevelError, "ERROR"},
-	}
-	names := []string{"Default", "ColorFul", "No Color"}
-	for i, c := range []Colors{ColorDefault, Colorful, NoColor} {
-		fmt.Println(names[i])
-		for _, l := range levels {
-			buf := new(bytes.Buffer)
-			h := NewHandler(buf, &HandlerOptions{Source: SrcShortFile, Colors: c})
-			pc, _, _, _ := runtime.Caller(0)
-			rec := slog.NewRecord(time.Now(), l.level, "Test message for "+l.levelStr, pc)
-			rec.AddAttrs(
-				// Add a variety of types
-				slog.Int("int", 42),
-				slog.Float64("float", 3.14),
-				slog.Bool("bool", true),
-				slog.String("string", "hello world"),
-			)
+	// Visual sample: iterate presets, one short line per level, attrs split by level.
+	testTime := time.Date(2024, 5, 28, 12, 34, 56, 0, time.UTC)
+	base := HandlerOptions{TimeFormat: time.TimeOnly}
+	names := []string{"Default", "Colorful", "No Color"}
+	profiles := []Colors{ColorDefault, Colorful, NoColor}
 
-			// Add a group for http
-			rec.AddAttrs(
-				slog.Group("http",
-					slog.String("method", "GET"),
-					slog.String("path", "/api/v1/users"),
-					slog.Int("status", 200),
-				),
-			)
-			if err := h.Handle(nil, rec); err != nil {
-				t.Fatal(err)
-			}
-
-			// Print to stdout for visual inspection
-			os.Stdout.Write(buf.Bytes())
-
+	write := func(colors Colors, opts HandlerOptions, persistent []slog.Attr, rec slog.Record) {
+		buf := new(bytes.Buffer)
+		opts.Colors = colors
+		var h slog.Handler = NewHandler(buf, &opts)
+		if len(persistent) > 0 {
+			h = h.WithAttrs(persistent)
 		}
+		if err := h.Handle(nil, rec); err != nil {
+			t.Fatal(err)
+		}
+		os.Stdout.Write(buf.Bytes())
+	}
+
+	for i, colors := range profiles {
+		fmt.Println(names[i])
+
+		rec := slog.NewRecord(testTime, slog.LevelDebug, "debug", 0)
+		rec.AddAttrs(slog.Bool("ok", true))
+		write(colors, base, nil, rec)
+
+		rec = slog.NewRecord(testTime, slog.LevelInfo, "info", pc)
+		rec.AddAttrs(slog.String("s", "hi"))
+		write(colors, HandlerOptions{TimeFormat: time.TimeOnly, Source: SrcShortFile}, nil, rec)
+
+		rec = slog.NewRecord(testTime, slog.LevelWarn, "warn", 0)
+		rec.AddAttrs(slog.Int("n", 42), slog.Float64("f", 3.14))
+		write(colors, base, nil, rec)
+
+		rec = slog.NewRecord(testTime, slog.LevelError, "error", 0)
+		rec.AddAttrs(
+			slog.Any("null", nil),
+			slog.Group("http", slog.String("method", "GET")),
+		)
+		write(colors, base, []slog.Attr{slog.String("trace_id", "abc")}, rec)
 	}
 }
 
