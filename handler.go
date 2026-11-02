@@ -44,11 +44,17 @@ const (
 	bgCyanColor    TerminalColor = "\033[46m" // background cyan
 	bgWhiteColor   TerminalColor = "\033[47m" // background white
 	// 256-color mode
-	orangeColor TerminalColor = "\033[38;5;208m" // orange (256-color mode)
-	purpleColor TerminalColor = "\033[38;5;129m" // purple (256-color mode)
-	pinkColor   TerminalColor = "\033[38;5;213m" // pink (256-color mode)
-	tealColor   TerminalColor = "\033[38;5;23m"  // teal (256-color mode)
-	noColor     TerminalColor = ""               // don't modify
+	orangeColor    TerminalColor = "\033[38;5;208m" // orange (256-color mode)
+	purpleColor    TerminalColor = "\033[38;5;129m" // purple (256-color mode)
+	pinkColor      TerminalColor = "\033[38;5;213m" // pink (256-color mode)
+	tealColor      TerminalColor = "\033[38;5;23m"  // teal (256-color mode)
+	frostBlueColor TerminalColor = "\033[38;5;110m" // soft frost blue (Nord/Tokyo)
+	softGreenColor TerminalColor = "\033[38;5;114m" // soft green
+	peachColor     TerminalColor = "\033[38;5;216m" // peach
+	mauveColor     TerminalColor = "\033[38;5;141m" // mauve
+	softRedColor   TerminalColor = "\033[38;5;203m" // soft red
+	aquaColor      TerminalColor = "\033[38;5;108m" // muted aqua (Gruvbox)
+	noColor        TerminalColor = ""               // don't modify
 )
 
 // Colors is a struct that contains the ANSI color codes for JSON syntax highlighting
@@ -469,24 +475,73 @@ func trimTrailingComma(buf *strings.Builder) {
 var (
 	ColorStandard = Colors{
 		Key:        grayColor,
-		Default:    grayColor,
+		Default:    whiteColor,
 		Persistent: bWhiteColor,
 		DateTime:   orangeColor,
-		Message:    orangeColor,
-		LevelInfo:  whiteColor,
-		LevelDebug: bWhiteColor,
+		Message:    bWhiteColor,
+		LevelInfo:  bWhiteColor,
+		LevelDebug: grayColor,
 		LevelWarn:  bYellowColor,
 		LevelError: bRedColor,
 	}
 	Colorful = Colors{
-		Key:        tealColor,
-		Persistent: bWhiteColor,
-		DateTime:   purpleColor,
-		Message:    redColor,
-		LevelInfo:  bWhiteColor,
+		Key:        pinkColor,
+		Default:    grayColor,
+		Persistent: bCyanColor,
+		DateTime:   orangeColor,
+		Message:    bWhiteColor,
+		LevelInfo:  greenColor,
 		LevelDebug: bCyanColor,
 		LevelWarn:  bYellowColor,
 		LevelError: bRedColor,
+	}
+	// ColorNord is a cool arctic palette inspired by Nord themes.
+	ColorNord = Colors{
+		Key:        bBlueColor,
+		Default:    grayColor,
+		Persistent: bCyanColor,
+		DateTime:   cyanColor,
+		Message:    bWhiteColor,
+		LevelInfo:  greenColor,
+		LevelDebug: grayColor,
+		LevelWarn:  bYellowColor,
+		LevelError: bRedColor,
+	}
+	// ColorDracula is a high-contrast purple/pink palette inspired by Dracula.
+	ColorDracula = Colors{
+		Key:        purpleColor,
+		Default:    grayColor,
+		Persistent: pinkColor,
+		DateTime:   cyanColor,
+		Message:    bWhiteColor,
+		LevelInfo:  bCyanColor,
+		LevelDebug: purpleColor,
+		LevelWarn:  orangeColor,
+		LevelError: bRedColor,
+	}
+	// ColorGruvbox is a warm retro palette inspired by Gruvbox.
+	ColorGruvbox = Colors{
+		Key:        aquaColor,
+		Default:    grayColor,
+		Persistent: bYellowColor,
+		DateTime:   orangeColor,
+		Message:    bWhiteColor,
+		LevelInfo:  greenColor,
+		LevelDebug: grayColor,
+		LevelWarn:  orangeColor,
+		LevelError: bRedColor,
+	}
+	// ColorCatppuccin is a soft pastel palette inspired by Catppuccin Mocha.
+	ColorCatppuccin = Colors{
+		Key:        frostBlueColor,
+		Default:    grayColor,
+		Persistent: tealColor,
+		DateTime:   mauveColor,
+		Message:    bWhiteColor,
+		LevelInfo:  softGreenColor,
+		LevelDebug: grayColor,
+		LevelWarn:  peachColor,
+		LevelError: softRedColor,
 	}
 )
 

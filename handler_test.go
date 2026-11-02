@@ -42,8 +42,8 @@ func TestOutput(t *testing.T) {
 	// Visual sample: iterate presets, one short line per level, attrs split by level.
 	testTime := time.Date(2024, 5, 28, 12, 34, 56, 0, time.UTC)
 	base := HandlerOptions{TimeFormat: time.TimeOnly}
-	names := []string{"Standard", "Colorful", "No Color"}
-	profiles := []Colors{ColorStandard, Colorful, Colors{}}
+	names := []string{"Standard", "Colorful", "Nord", "Dracula", "Gruvbox", "Catppuccin", "No Color"}
+	profiles := []Colors{ColorStandard, Colorful, ColorNord, ColorDracula, ColorGruvbox, ColorCatppuccin, Colors{}}
 
 	write := func(colors Colors, opts HandlerOptions, persistent []slog.Attr, rec slog.Record) {
 		buf := new(bytes.Buffer)
