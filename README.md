@@ -63,7 +63,7 @@ Pass `nil` for options to use defaults (`time.TimeOnly`, level `INFO`, no ANSI c
 ### Differences from `slog.JSONHandler`
 
 - `HandlerOptions` is a package-specific struct, not `slog.HandlerOptions`.
-- ANSI color constants are unexported; use the `ColorStandard` and `Colorful` presets or custom `Colors` values.
+- ANSI color constants are unexported; use the built-in presets (`ColorStandard`, `Colorful`, `ColorNord`, `ColorDracula`, `ColorGruvbox`, `ColorCatppuccin`) or custom `Colors` values.
 - Default `TimeFormat` is `time.TimeOnly`, not RFC3339.
 - `time.Duration` values are serialized as human-readable strings (for example `"1s"`), not nanosecond integers. See [issues.md](issues.md) for a proposed nanosecond option.
 
@@ -98,33 +98,36 @@ httpLogger.Info("request", "status", 200)
 
 ## Color Schemes
 
-Two built-in presets are available via `HandlerOptions.Colors`. The zero value of `Colors` produces plain JSON with no ANSI escape codes.
+Built-in presets are available via `HandlerOptions.Colors`. The zero value of `Colors` produces plain JSON with no ANSI escape codes.
 
 ```go
 handler := colorjson.NewHandler(os.Stderr, &colorjson.HandlerOptions{
-	Colors: colorjson.ColorStandard, // or Colorful, or Colors{} for no color
+	Colors: colorjson.ColorNord, // or any preset, or Colors{} for no color
 })
 ```
 
-The screenshot below shows the same sample lines for each preset (from `go test -run TestOutput`):
+| Preset | Feel |
+|--------|------|
+| `ColorStandard` | Muted ops look: gray keys, white values, orange time, dim debug |
+| `Colorful` | High-chroma demo: pink keys, orange time, green info, cyan debug |
+| `ColorNord` | Cool arctic: blue keys, cyan time, green info |
+| `ColorDracula` | High-contrast: purple keys, pink persistent, cyan info |
+| `ColorGruvbox` | Warm retro: aqua keys, orange time/warn |
+| `ColorCatppuccin` | Soft pastel: frost-blue keys, mauve time, peach warn |
+
+Persistent attributes from `WithAttrs` use each preset's `Persistent` color (bright white in `ColorStandard`, bright cyan in `Colorful`).
+
+The screenshot below shows sample lines for early presets (from `go test -run TestOutput`):
 
 ![Color scheme previews](color-json.png)
 
-To see live colors in your terminal:
+To see live colors for every preset in your terminal:
 
 ```bash
 env -u NO_COLOR FORCE_COLOR=1 go test -run TestOutput -v
+# or
+env -u NO_COLOR FORCE_COLOR=1 go run ./examples/cmd
 ```
-
-### ColorStandard
-
-Gray keys and values, orange time and message, yellow warnings, red errors.
-
-### Colorful
-
-Teal keys, purple time, red message, yellow warnings, red errors.
-
-Persistent attributes from `WithAttrs` use bright white in both `ColorStandard` and `Colorful`.
 
 ### Custom colors
 
